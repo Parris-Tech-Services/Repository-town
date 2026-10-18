@@ -116,6 +116,7 @@ async function start() {
 
   // ── Overview (bird's-eye) ────────────────────────────────────────────────
   function setOverview(on) {
+    if (on && document.pointerLockElement) document.exitPointerLock();
     overview = on && mode === 'town';
     $('btn-map').setAttribute('aria-pressed', String(overview));
     scene.fog = overview || mode === 'house' ? null : fog;
@@ -147,13 +148,14 @@ async function start() {
   $('btn-mouse').hidden = input.touch;
   $('btn-mouse').onclick = () => { input.setMouseLook(!input.mouseLook); syncMouseLook(); status(input.mouseLook ? 'Mouse look on — click the view to capture the mouse, Esc to release it.' : 'Mouse look off — drag to look around.'); };
   syncMouseLook();
+  input.onMouseLookChange = () => { syncMouseLook(); status(input.mouseLook ? 'Mouse look on — Esc releases the mouse.' : 'Mouse look off — drag to look around.'); };
   // In bird's-eye view a click picks a house to travel to, so it never captures the mouse.
   input.canCapture = () => !overview;
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement) status('Mouse captured — move it to look around. Esc releases it.');
     else if (input.mouseLook && !panelOpen && !playing) status('Mouse released — click the view to capture it again.');
   });
-  $('btn-help').onclick = () => { $('help').hidden = !$('help').hidden; };
+  $('btn-help').onclick = () => { if (document.pointerLockElement) document.exitPointerLock(); $('help').hidden = !$('help').hidden; };
   $('help-close').onclick = () => { $('help').hidden = true; };
   $('btn-exit').onclick = () => { stopGame(); if (mode === 'house') { closePanel(); leave(); save(); status('Exited safely.'); } };
   $('btn-unstuck').onclick = () => { closePanel(); if (mode === 'house' && inside) { leave(); } else { spawn(); } save(); status('Moved to safety. Your progress is preserved.'); };
@@ -166,6 +168,7 @@ async function start() {
     $('card').hidden = false;
   }
   function openPanel(content, thing) {
+    if (document.pointerLockElement) document.exitPointerLock();
     panelOpen = { content, thing };
     // Panels have buttons and text boxes: give the mouse pointer back.
     if (document.pointerLockElement) document.exitPointerLock();
@@ -294,7 +297,7 @@ async function start() {
       return;
     }
     if (input.consume('map')) setOverview(!overview);
-    if (input.consume('mouselook')) { input.setMouseLook(!input.mouseLook); syncMouseLook(); status(input.mouseLook ? 'Mouse look on — Esc releases the mouse.' : 'Mouse look off — drag to look around.'); }
+    // Key L toggles inside the trusted keydown event, where browsers permit pointer lock.
     if (input.consume('back')) { if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
     if (overview) {
       camera.position.set(player.pos.x, 150, player.pos.z + 95); camera.lookAt(player.pos.x, 0, player.pos.z);
