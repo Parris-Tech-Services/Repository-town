@@ -12,7 +12,11 @@
 <body>
 <div id="loading" role="status"><h1>Repository Town</h1><p id="loading-text">Loading the town…</p></div>
 <header id="hud">
-  <h1>🏘 Repository Town</h1>
+  <div class="hud-heading">
+    <h1>🏘 <span class="hud-title-full">Repository Town</span><span class="hud-title-short">Town</span></h1>
+    <button id="btn-hud-toggle" type="button" aria-controls="hud-details" aria-expanded="true" aria-label="Minimise town controls" title="Minimise controls">−</button>
+  </div>
+  <div id="hud-details">
   <form id="search-form" role="search">
     <input id="search" list="house-list" placeholder="Repo name or A1" aria-label="Find a house" autocomplete="off">
     <datalist id="house-list"></datalist>
@@ -28,6 +32,7 @@
     <button id="btn-reset">Reset</button>
   </div>
   <p id="status" aria-live="polite"></p>
+  </div>
 </header>
 <aside id="card" hidden aria-live="polite"></aside>
 <div id="prompt" hidden></div>
