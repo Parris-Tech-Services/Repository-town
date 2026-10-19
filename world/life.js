@@ -12,7 +12,7 @@ export const LOT_X = 26, LOT_Z = 46;
 export const SEC_PER_MIN = 3;
 export const WALK = 1.5, BIKE = 4.5, DRIVE = 8;               // metres per real second
 const WAGES = { retired: 25, student: 10, mayor: 70, nurse: 60, teacher: 60, programmer: 65 };
-const PUBLIC_PAYROLL = new Set(['hall','school','clinic','post','depot','square']);
+const PUBLIC_PAYROLL = new Set(['hall','school','clinic','post','depot','square','home']);
 const ROAD = (r) => r * LOT_Z - 3.5 * LOT_Z + 16;            // road centre line of street r (0-based)
 const lotX = (col) => (col - 12.5) * LOT_X;
 const LOT8_Z = 7 * LOT_Z - 3.5 * LOT_Z;                       // z of the street-8 lot centres
@@ -310,8 +310,13 @@ export class TownLife {
       const src = this.place(from), dst = this.place(to);
       const have = src.out[good] || 0, need = (dst.target?.[good] || 0) - (dst.stock[good] || 0);
       if (have < 3 || need < 3 || this.trucks.some((o) => o !== t && o.job?.to === to && o.job?.good === good)) continue;
-      const score = need / (dst.target[good] || 1) + this.rand() * 0.1;
-      if (!best || score > best.score) best = { from, to, good, n: Math.min(20, have, need), score };
+      const cost=WHOLESALE[good];
+      const balance=(dst.operating||0)+(dst.till||0);
+      const affordable=cost?Math.floor(balance/cost):20;
+      const quantity=Math.min(20,have,need,affordable);
+      if(quantity<3)continue;
+      const score=need/(dst.target[good]||1)+this.rand()*.1;
+      if(!best||score>best.score)best={from,to,good,n:quantity,score};
     }
     if (!best) { t.state = 'waiting for an order'; return; }
     t.job = best; t.state = `heading to the ${this.place(best.from).name} for ${GOODS[best.good].name}`;
@@ -328,11 +333,18 @@ export class TownLife {
       t.path = driveRoute(t, this.stopAt(t, t.job.to));
       if (!n) { t.job = null; t.path = []; t.leg = null; t.state = 'found nothing to collect, looking for another job'; }
     } else {
-      const n = t.load?.n || 0;
-      dst.stock[g] = (dst.stock[g] || 0) + n;
-      this.stats.deliveries++; this.stats.delivered[g] = (this.stats.delivered[g] || 0) + n;
-      if (n >= 8 || this.rand() < 0.3) this.log(`${t.driver?.name || 'A truck'} delivered ${amount(g, n)} to the ${dst.name}.`);
-      t.load = null; t.job = null; t.wait = 4; t.state = 'unloaded, looking for the next job';
+      const shipped=t.load?.n||0,unit=WHOLESALE[g]||0;
+      const balance=(dst.operating||0)+(dst.till||0);
+      const n=Math.min(shipped,unit?Math.floor(balance/unit):shipped);
+      const invoice=n*unit;
+      if(shipped>n)src.out[g]=(src.out[g]||0)+(shipped-n);
+      if(n&&(!invoice||TownMoney.debitBusiness(dst,invoice))){
+        if(invoice){src.operating=(src.operating||0)+invoice;this.stats.wholesale+=invoice;}
+        dst.stock[g]=(dst.stock[g]||0)+n;
+        this.stats.deliveries++;this.stats.delivered[g]=(this.stats.delivered[g]||0)+n;
+        if(n>=8||this.rand()<.3)this.log((t.driver?.name||'A truck')+' delivered '+amount(g,n)+' to the '+dst.name+' for $'+invoice+'.');
+      }else if(n){src.out[g]=(src.out[g]||0)+n;}
+      t.load=null;t.job=null;t.wait=4;t.state='unloaded, looking for the next job';
     }
   }
 
