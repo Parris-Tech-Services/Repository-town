@@ -194,7 +194,8 @@ export class TownLife {
   }
   payPlayerPurchase(site,good){
     const shop=this.place(site),inv=shop&&(site==='bakery'?shop.out:shop.stock);
-    if(!shop||!shop.sells?.includes(good)||!GOODS[good])return {ok:false,message:'Product not sold here.'};
+    const sells=site==='cafe'?['pie','bread']:site==='pub'?['pie']:shop?.sells;
+    if(!shop||!sells?.includes(good)||!GOODS[good])return {ok:false,message:'Product not sold here.'};
     if(!this.open(shop))return {ok:false,message:'Shop is currently closed.'};
     if(!(inv[good]>0))return {ok:false,message:'Sold out of '+GOODS[good].name+'.'};
     const payment=this.money.purchase(this.day,GOODS[good].price,shop,good);
