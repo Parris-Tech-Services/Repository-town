@@ -42,7 +42,7 @@ export function bankPanel(life){
     ' · <b>Savings:</b> <span data-money="savings">'+dollar(m.savings)+'</span></p>'+
     '<p><b>Bank-held cash backing your accounts:</b> <span data-money="vault">'+dollar(m.bankVault)+'</span>. '+
     'This simple bank keeps customer deposits fully backed: depositing moves cash into an account; withdrawing moves it back. Moving money into savings does not create more money.</p>'+
-    '<p class="dim">This is not a real bank and does not yet offer loans, interest or mortgages. Withdrawals require enough funds. An open teller is needed for transactions.</p>',
+    '<p class="dim">This is a fictional, fully backed credit union with limited member loans paid from existing bank capital. Borrowing accrues interest; there are no mortgages, credit cards or uninsured lending. Deposits and withdrawals need funds and an open teller.</p>',
   mount:container=>{
     const form=document.createElement('form');
     form.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin:14px 0;';
