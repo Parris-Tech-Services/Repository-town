@@ -704,7 +704,7 @@ async function start() {
   // Test hook: lets the browser test suite drive real gameplay deterministically.
   window.__town = {
     money:()=>({cash:life.money.cash,checking:life.money.checking,savings:life.money.savings,total:life.money.total,method:life.money.payment,
-      job:life.money.current(life.day),treasury:life.treasury}),
+      job:life.money.current(life.day)?{...life.money.current(life.day),doneTasks:[...life.money.current(life.day).doneTasks]}:null,treasury:life.treasury}),
     wallet:()=>openPanel(walletPanel(life),guideSpot),
     bank:()=>openPanel(bankPanel(life),guideSpot),
     jobSite:(site)=>openPanel(jobPanel(life,site),guideSpot),
