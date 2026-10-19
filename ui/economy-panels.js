@@ -172,7 +172,10 @@ export function townBudgetPanel(life){
   esc(x.debit)+' → '+esc(x.credit)+'</td><td>'+dollar(x.amount)+'</td></tr>').join('');
  const businesses=[...life.places.values()].filter(p=>p.kind!=='farmhouse').map(p=>({
   name:p.name,funds:(p.till||0)+(p.operating||0),daily:p.dailyExpenses||0,
-  lifetime:p.lifetimeExpenses||0,unpaid:p.unpaidBills||0
+  lifetime:p.lifetimeExpenses||0,unpaid:p.unpaidBills||0,
+  grossRevenue:(p.grossSales||0)+(p.wholesaleRevenue||0),
+  expenses:(p.costOfGoods||0)+(p.payrollPaid||0)+(p.lifetimeExpenses||0),
+  profit:(p.grossSales||0)+(p.wholesaleRevenue||0)-(p.costOfGoods||0)-(p.payrollPaid||0)-(p.lifetimeExpenses||0)
  }));
  return {title:'📊 Town economic accounts',wide:true,
  body:'<p><b>Money held across the town:</b> '+dollar(a.moneySupply)+
@@ -186,11 +189,11 @@ export function townBudgetPanel(life){
  ' · Player rent owed: '+dollar(f.playerRentArrears)+
  ' · Player power owed: '+dollar(f.playerUtilityArrears)+'</p>'+
  '<h3>Businesses: cash, operating costs and unpaid bills</h3>'+
- '<table class="ledger"><tr><th>Business</th><th>Funds</th><th>Daily charges</th><th>Bills owed</th></tr>'+
+ '<table class="ledger"><tr><th>Business</th><th>Funds</th><th>Gross revenue</th><th>Recorded costs</th><th>Operating result</th><th>Bills owed</th></tr>'+
  businesses.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+dollar(x.funds)+'</td><td>'+
- dollar(x.daily)+'</td><td>'+dollar(x.unpaid)+'</td></tr>').join('')+'</table>'+
+ dollar(x.grossRevenue)+'</td><td>'+dollar(x.expenses)+'</td><td>'+dollar(x.profit)+'</td><td>'+dollar(x.unpaid)+'</td></tr>').join('')+'</table>'+
  '<h3>Double-entry transfers (new economic systems)</h3>'+
  '<table class="ledger"><tr><th>Day</th><th>Memo</th><th>From → To</th><th>Amount</th></tr>'+rows+'</table>'+
- '<p class="dim">The journal covers new tax, loan, rent and operating-charge flows. Older payroll, stock purchases and supplier payments still use the legacy accounting pathway, so these are not yet full audited double-entry business statements.</p>',
+ '<p class="dim">The journal covers new and most legacy retail, payroll, wholesale, loan, tax and household flows. The business result includes recorded revenue, wages, wholesale purchases and utilities/rates but excludes unsold opening inventory valuation, depreciation and realistic production overheads.</p>',
  actions:[{label:'💳 My wallet',run:()=>walletPanel(life)}]};
 }
