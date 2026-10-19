@@ -1,5 +1,10 @@
-import { TownMoney } from './money.js';
-import { TownFinance } from './finance.js';
+import { distributePower, townPowerDemands, POWER_LINE_IDS, GRID_FAULT_COST } from './power-grid.js';
+import { initialisePublicLife, attendPublicForum, updatePublicForum, civicDialogue } from './public-forum.js';
+import { freshFinance, noteSale, noteRates, withhold, stateFunded, drawState, noteCouncilWage, dailyGrants, dailyClose as financeDailyClose, payBills, economyReport, bizStats, governmentMoney } from './finance.js';
+import { receipt, tickJobs, startJob, performTask, abandonJob, finishJob, jobsReport, current as currentJob, supervisors } from './jobs.js';
+import { freshCredit, recordEarning, noteBank, creditReport, borrow, repay, accrueInterest } from './credit.js';
+import { startNeeds, advanceNeeds, eatPlayer, hotelCheckIn, sleepPlayer, needsReport } from './needs.js';
+import { MAYOR_CANDIDATES, createGovernment, civicElection, castCivicVote, submitRequest, requestFeeder, proposeMotion, councilMeeting, advanceCivicWork, budgetRevenue, restoreCivic, govSummary, maintainServices } from './government.js';
 // Town life simulation: the clock, farms, the mill and bakery, shops, trucks, the post,
 // and villagers with jobs, hunger, pantries, wallets and daily routines. Pure logic (no
 // three.js) so it runs and is tested on its own; src/world/townlife.js draws it.
@@ -10,10 +15,18 @@ import { TownFinance } from './finance.js';
 // Places sit on street 8's empty lots (G8–Z8) and the farm strip south of it.
 
 export const LOT_X = 26, LOT_Z = 46;
-export const SEC_PER_MIN = 3;
+export const TOWN_CLOCK = Object.freeze({ minutesPerDay:1440, realSecondsPerTownMinute:3 });
+export const SEC_PER_MIN = TOWN_CLOCK.realSecondsPerTownMinute; // 72 real minutes per 24-hour town day at 1×
 export const WALK = 1.5, BIKE = 4.5, DRIVE = 8;               // metres per real second
-const WAGES = { retired: 25, student: 10, mayor: 70, nurse: 60, teacher: 60, programmer: 65 };
-const PUBLIC_PAYROLL = new Set(['hall','school','clinic','post','depot','square','home']);
+const WAGES = { retired: 40, student: 20, mayor: 95, nurse: 85, teacher: 85, programmer: 95, 'bank teller': 75, 'power operator': 85, firefighter: 85 };
+const BASE_WAGE = 70;
+// Per-worker harvest multipliers: a market garden and a chook shed out-produce a paddock per hand.
+const FARM_YIELD = { veg: 1.6, eggs: 1.5 };
+// Workplaces paid from the town treasury; everyone else is paid from their employer's till.
+const PUBLIC = new Set(['hall', 'school', 'clinic', 'post', 'depot', 'power', 'waterworks', 'sewage', 'recycling', 'landfill', 'fire', 'bank', 'square']);
+const WEATHER = ['sunny', 'sunny', 'cloudy', 'rainy', 'windy', 'sunny', 'cloudy'];
+const SERVICES = ['power', 'water', 'sewage', 'roads', 'waste', 'post'];
+export const CANDIDATES = MAYOR_CANDIDATES;
 const ROAD = (r) => r * LOT_Z - 3.5 * LOT_Z + 16;            // road centre line of street r (0-based)
 const lotX = (col) => (col - 12.5) * LOT_X;
 const LOT8_Z = 7 * LOT_Z - 3.5 * LOT_Z;                       // z of the street-8 lot centres
@@ -33,11 +46,15 @@ export const GOODS = {
   coffee: { name: 'coffee beans', unit: 'bag', price: 9 },
   tea: { name: 'tea', unit: 'tin', price: 6 },
   parcel: { name: 'parcels', unit: 'parcel', price: 0 },
+  fuel: { name: 'fuel', unit: 'drum', price: 3 },
+  ore: { name: 'ore', unit: 'tonne', price: 4 },
+  scrap: { name: 'scrap metal', unit: 'crate', price: 2 },
+  parts: { name: 'spare parts', unit: 'box', price: 12 },
 };
 
 // col letter → place. `sells` are what villagers can buy; `makes` what work produces.
 export const PLACE_DEFS = [
-  { col: 'G', id: 'hall', name: 'Town Hall', kind: 'hall', opens: 9 * 60, closes: 17 * 60 },
+  { col: 'G', id: 'hall', name: 'Town Hall', kind: 'hall', opens: 9 * 60, closes: 17 * 60, target: { parts: 10 } },
   { col: 'H', id: 'store', name: 'General Store', kind: 'shop', sells: ['eggs', 'milk', 'flour', 'tea', 'coffee', 'bread'], opens: 7 * 60, closes: 19 * 60, target: { eggs: 20, milk: 20, flour: 10, tea: 10, coffee: 10, bread: 10 } },
   { col: 'I', id: 'bakery', name: 'Bakery', kind: 'shop', sells: ['bread', 'pie'], opens: 6 * 60, closes: 18 * 60, target: { flour: 12, eggs: 6, milk: 6, lamb: 6, veg: 6 } },
   { col: 'J', id: 'cafe', name: 'Commit Café', kind: 'cafe', opens: 6 * 60 + 30, closes: 16 * 60, target: { bread: 10, eggs: 10, milk: 10, coffee: 6, veg: 6, pie: 6 } },
@@ -57,9 +74,17 @@ export const PLACE_DEFS = [
   { col: 'X', id: 'garden', name: 'Market Garden', kind: 'farm', makes: 'veg', opens: 6 * 60, closes: 15 * 60 },
   { col: 'Y', id: 'silo', name: 'Wheat Farm', kind: 'farm', makes: 'grain', opens: 6 * 60, closes: 16 * 60 },
   { col: 'Z', id: 'farmhouse', name: 'Farmhouse', kind: 'home', opens: 0, closes: 24 * 60 },
+  // Across the road from the high street (south side): finance, utilities and industry.
+  { col: 'G', side: 'south', id: 'bank', name: 'Community Bank', kind: 'bank', opens: 9 * 60, closes: 16 * 60 },
+  { col: 'I', side: 'south', id: 'hotel', name: 'Railway Hotel', kind: 'hotel', opens: 0, closes: 24 * 60 },
+  { col: 'H', side: 'south', id: 'power', name: 'Power Station', kind: 'utility', opens: 0, closes: 24 * 60, target: { fuel: 160 } },
+  { col: 'J', side: 'south', id: 'waterworks', name: 'Water Works', kind: 'utility', opens: 0, closes: 24 * 60 },
+  { col: 'L', side: 'south', id: 'sewage', name: 'Wastewater Works', kind: 'utility', opens: 0, closes: 24 * 60 },
+  { col: 'N', side: 'south', id: 'fire', name: 'Fire & Rescue', kind: 'fire', opens: 0, closes: 24 * 60 },
+  { col: 'P', side: 'south', id: 'recycling', name: 'Recycling Centre', kind: 'utility', opens: 7 * 60, closes: 16 * 60 },
+  { col: 'Q', side: 'south', id: 'landfill', name: 'Waste Depot', kind: 'utility', opens: 6 * 60, closes: 17 * 60 },
+  { col: 'R', side: 'south', id: 'foundry', name: 'Foundry & Workshop', kind: 'industry', opens: 7 * 60, closes: 16 * 60, target: { ore: 40, scrap: 20 } },
 ];
-
-const WHOLESALE = Object.fromEntries(Object.entries(GOODS).map(([g,v]) => [g,v.price===0?0:Math.max(1,Math.floor(v.price*.55))]));
 
 const JOBS = [
   ['farmer', 'silo', 6 * 60, 16 * 60], ['farmer', 'garden', 6 * 60, 15 * 60], ['farmer', 'orchard', 7 * 60, 15 * 60],
@@ -73,10 +98,13 @@ const JOBS = [
   ['programmer', 'home', 10 * 60, 18 * 60], ['retired', 'square', 9 * 60, 12 * 60], ['student', 'school', 8 * 60 + 30, 15 * 60],
   ['student', 'school', 8 * 60 + 30, 15 * 60], ['artist', 'square', 10 * 60, 15 * 60], ['retired', 'square', 14 * 60, 17 * 60],
   ['farmer', 'silo', 7 * 60, 15 * 60], ['grocer', 'greengrocer', 8 * 60, 16 * 60],
+  ['power operator', 'power', 6 * 60, 18 * 60], ['water operator', 'waterworks', 7 * 60, 15 * 60], ['recycler', 'recycling', 7 * 60, 15 * 60],
+  ['firefighter', 'fire', 8 * 60, 18 * 60], ['bank teller', 'bank', 8 * 60 + 30, 16 * 60 + 30], ['foundry worker', 'foundry', 7 * 60, 15 * 60],
 ];
 // Villager names; src/ui/social.js keeps their friendships and grudges.
 export const VILLAGER_NAMES = ['Mabel', 'Arlo', 'Bea', 'Cas', 'Dot', 'Ezra', 'Flo', 'Gus', 'Hattie', 'Ivo', 'June', 'Kip', 'Lou', 'Merv', 'Nora', 'Ollie',
-  'Peg', 'Rafe', 'Sadie', 'Theo', 'Una', 'Vern', 'Win', 'Zara', 'Bluey', 'Clem', 'Dulcie', 'Errol', 'Fern', 'Gwen', 'Harlan', 'Ida'];
+  'Peg', 'Rafe', 'Sadie', 'Theo', 'Una', 'Vern', 'Win', 'Zara', 'Bluey', 'Clem', 'Dulcie', 'Errol', 'Fern', 'Gwen', 'Harlan', 'Ida',
+  'Archie', 'Bonnie', 'Cooper', 'Daisy', 'Elsie', 'Frankie'];
 
 // Home meals: [name, ingredients]. Villagers cook the first one their pantry can make.
 const MEALS = {
@@ -91,6 +119,24 @@ export const amount = (good, n) => (GOODS[good].unit === 'dozen' ? `${n} dozen $
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const fmt = (m) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
 export const timeText = fmt;
+
+// ── Truck footprints ───────────────────────────────────────────────────────
+// A delivery truck is about 6.6 m × 2.2 m (see makeTruck in townlife.js). Boxes are oriented:
+// (fx, fz) is the unit forward vector and half-extents run along it (hl) and across it (hw).
+export const TRUCK = { hl: 3.3, hw: 1.2, gap: 0.15, turn: 1.5, site: 10, follow: 11 };
+// turn: rad per real second. site: hold-off radius (m) round a stop in use. follow: same-lane
+// following distance (m, centre to centre) so the truck in front always has room to turn out.
+export function truckBox(x, z, heading, grow = 0) { return { x, z, fx: Math.sin(heading), fz: Math.cos(heading), hl: TRUCK.hl + grow, hw: TRUCK.hw + grow }; }
+export function boxesOverlap(a, b) {
+  for (const [ax, az] of [[a.fx, a.fz], [a.fz, -a.fx], [b.fx, b.fz], [b.fz, -b.fx]]) {
+    const ra = a.hl * Math.abs(a.fx * ax + a.fz * az) + a.hw * Math.abs(a.fz * ax - a.fx * az);
+    const rb = b.hl * Math.abs(b.fx * ax + b.fz * az) + b.hw * Math.abs(b.fz * ax - b.fx * az);
+    if (Math.abs((b.x - a.x) * ax + (b.z - a.z) * az) >= ra + rb) return false;
+  }
+  return true;
+}
+const clampAbs = (v, m) => Math.max(-m, Math.min(m, v));
+function angleDiff(a, b) { let d = a - b; while (d > Math.PI) d -= Math.PI * 2; while (d < -Math.PI) d += Math.PI * 2; return d; }
 
 // Seeded random so a new town always starts the same way.
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
@@ -147,26 +193,42 @@ export class TownLife {
     this.rand = rng(seed);
     this.day = 1; this.minute = minute;
     this.events = []; this.stats = this.freshStats();
-    this.money = new TownMoney();
-    this.treasury = 80000;
-    this.finance=new TownFinance(this);
-    this.money.finance=this.finance;
+    this.powerGridEvents = []; this.powerGridEventSeq = 0;
     this.places = new Map();
     for (const d of PLACE_DEFS) {
       const col = d.col.charCodeAt(0) - 65;
-      const x = lotX(col);
+      const x = lotX(col), south = d.side === 'south';
       this.places.set(d.id, {
-        ...d, x, door: { x, z: LOT8_Z + 7.5 }, front: { x, z: LOT8_Z + 9.3 }, curb: { x, z: ROAD(7) - 1.7 },
-        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till:0, grossSales:0, operating:PUBLIC_PAYROLL.has(d.id)?0:4500, out:{},
+        ...d, x, door: { x, z: south ? FIELD_Z0 - 0.5 : LOT8_Z + 7.5 }, front: { x, z: south ? FIELD_Z0 - 2.2 : LOT8_Z + 9.3 }, curb: { x, z: south ? ROAD(7) + 1.7 : ROAD(7) - 1.7 },
+        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till: 0, out: {},
       });
     }
     // Farms keep produce at the farm until a truck collects it; fields lie across the road.
     for (const p of this.places.values()) if (p.kind === 'farm') { p.out[p.makes] = 8; p.field = { x0: p.x - 11, x1: p.x + 11, z0: FIELD_Z0, z1: FIELD_Z1 }; p.growth = 0.5; }
     this.place('mill').out.flour = 6;
     this.place('bakery').out = { bread: 8, pie: 4 };
-    this.place('depot').out = { coffee: 12, tea: 10, parcel: 6 };
+    this.place('depot').out = { coffee: 12, tea: 10, parcel: 6, fuel: 30, ore: 10 };
+    Object.assign(this.place('power').stock, { fuel: 120 });
+    this.place('waterworks').stock = { water: 160 };
+    this.place('sewage').stock = { wastewater: 0 };
+    this.place('recycling').stock = { recyclables: 0, scrap: 4 };
+    this.place('landfill').stock = { rubbish: 0 };
+    Object.assign(this.place('foundry').stock, { ore: 20, metal: 4 });
+    this.place('foundry').out = { parts: 6 };
+    this.place('hall').stock = { parts: 6 };
+    // Town finances, utilities and the visitor's own money and bag (from the living-town design).
+    this.civic = {
+      weather: 'sunny', treasury: 4800, taxRate: 0.1, mayor: 'Vern', ballots: {}, voted: false, electionDay: 7,
+      services: Object.fromEntries(SERVICES.map((k) => [k, 100])), homes: { rubbish: 0, recyclables: 0 },
+      supply: { power: 0, powerDemand: 0, water: 0, waterDemand: 0, ok: true, waterOk: true },
+      powerLines: {}, powerGrid: null,
+      indicators: { health: 90, happiness: 78, environment: 82, pollution: 3 },
+      letters: [], player: { wallet: 75, bank: 150, bag: {} }, credit: freshCredit(), finance: freshFinance(),
+    };
     this.homes = homes;
-    const picks = homes.filter((_, i) => i % Math.max(1, Math.floor(homes.length / JOBS.length)) === 2).slice(0, JOBS.length);
+    // Spread households across town: every step-th house, starting from the third.
+    const step = Math.max(1, Math.floor(homes.length / JOBS.length));
+    const picks = homes.filter((_, i) => i % step === Math.min(2, step - 1)).slice(0, JOBS.length);
     this.villagers = JOBS.slice(0, picks.length).map(([job, work, start, end], i) => {
       const home = picks[i];
       return {
@@ -177,41 +239,24 @@ export class TownLife {
         carrying: null, lastMeal: null, meals: [], seen: [], doneToday: {},
       };
     });
-    this.trucks = [0, 1, 2].map((i) => ({ id: i, driver: null, x: this.place('depot').curb.x + (i - 1) * 8, z: ROAD(7) - 1.7, heading: 0, path: [], job: null, load: null, wait: 0, state: 'parked' }));
+    // Dedicated marked bays beside the depot, outside the 2 travel lanes.
+    // Never initialise a stationary truck in the middle of the carriageway.
+    this.trucks = [0, 1, 2].map((i) => {
+      const bay = this.depotBay(i);
+      return { id:i, driver:null, x:bay.x, z:bay.z, heading:Math.PI/2,
+        path:[], job:null, load:null, wait:0, leg:null, state:'parked', braking:false };
+    });
     this.parcels = [];   // { coordinate, x, z, from } waiting on doorsteps
     this.obstacles = []; // set by the renderer each frame: [{x, z}] (the player)
     for (const t of this.trucks) t.driver = this.villagers.find((v) => v.job === 'truck driver' && !this.trucks.some((o) => o.driver === v)) || null;
+    createGovernment(this);
+    initialisePublicLife(this);
+    startNeeds(this);
+    this.place('hotel').bookings=[];
     this.log(`Day ${this.day} begins. The town wakes up.`);
   }
 
-  freshStats(){return {harvested:{},milled:0,baked:0,deliveries:0,delivered:{},sold:{},meals:0,mealsOut:0,parcels:0,wagesPaid:0,wagesOwed:0,wholesale:0,playerWages:0}}
-  isPublicPayroll(site){return PUBLIC_PAYROLL.has(site)}
-  payWageSource(site,amount){
-    if(!Number.isSafeInteger(amount)||amount<=0)return false;
-    if(this.isPublicPayroll(site)){
-      if(site==='school'||site==='clinic'){
-        if(this.finance.stateTreasury<amount)return false;
-        this.finance.stateTreasury-=amount;return true;
-      }
-      if(this.treasury<amount)return false;
-      this.treasury-=amount;return true;
-    }
-    const p=this.place(site);
-    return p?TownMoney.debitBusiness(p,amount):false;
-  }
-  payPlayerPurchase(site,good){
-    const shop=this.place(site),inv=shop&&(site==='bakery'?shop.out:shop.stock);
-    const sells=site==='cafe'?['pie','bread']:site==='pub'?['pie']:shop?.sells;
-    if(!shop||!sells?.includes(good)||!GOODS[good])return {ok:false,message:'Product not sold here.'};
-    if(!this.open(shop))return {ok:false,message:'Shop is currently closed.'};
-    if(!(inv[good]>0))return {ok:false,message:'Sold out of '+GOODS[good].name+'.'};
-    const payment=this.money.purchase(this.day,GOODS[good].price,shop,good);
-    if(!payment.ok)return payment;
-    inv[good]--;
-    this.stats.sold[good]=(this.stats.sold[good]||0)+1;
-    this.log('The player bought '+GOODS[good].name+' from '+shop.name+'.');
-    return {...payment,price:GOODS[good].price,remaining:inv[good]};
-  }
+  freshStats() { return { harvested: {}, milled: 0, baked: 0, deliveries: 0, delivered: {}, sold: {}, meals: 0, mealsOut: 0, parcels: 0, taxes: 0, wages: 0, recycled: 0, landfill: 0, letters: 0, repairs: 0, stockouts: 0, powerCutHours: 0 }; }
   place(id) { return this.places.get(id); }
   time() { return fmt(this.minute); }
   isDay() { return this.minute >= 6 * 60 && this.minute < 19 * 60; }
@@ -223,19 +268,214 @@ export class TownLife {
   // Advances the town by `minutes` of town time (call with small steps).
   tick(minutes) {
     const before = this.minute;
+    tickJobs(this, minutes);
     this.minute += minutes;
-    if (this.minute >= 24 * 60) { this.minute -= 24 * 60; this.day++; this.newDay(); this.finance.dailyClose(); }
+    if (this.minute >= 24 * 60) { this.minute -= 24 * 60; this.day++; this.newDay(); }
     const hourly = Math.floor(before / 60) !== Math.floor(this.minute / 60) || this.minute < before;
     if (hourly) this.everyHour();
+    advanceNeeds(this,minutes);
     for (const v of this.villagers) this.liveVillager(v, minutes);
+    updatePublicForum(this);
+    advanceCivicWork(this, minutes);
+    if (hourly && Math.floor(this.minute / 60) === 10 && this.day >= this.civic.government.meetingDay) councilMeeting(this);
     for (const t of this.trucks) this.driveTruck(t, minutes);
+    for (const t of this.trucks) {
+      t.jam = t.braking ? (t.jam || 0) + minutes : 0;      // continuous time spent unable to move
+      if (t.jam > 20) { t.jam = 0; this.unjam(t); }
+    }
   }
 
   newDay() {
     this.yesterday = this.stats;
     this.stats = this.freshStats();
     for (const v of this.villagers) v.doneToday = {};
-    this.log(`Day ${this.day} begins. The 6:40 freight train is due at the Rail Depot.`);
+    const c = this.civic;
+    accrueInterest(this);
+    // Council rates: every household pays $15 a day towards wages and services.
+    let rates = 0; for (const v of this.villagers) { const due = 15 + (v.rateArrears || 0), r = Math.min(due, Math.max(0, v.wallet)); v.wallet -= r; rates += r; v.rateArrears = Math.min(60, Math.round((due - r) * 100) / 100); }
+    c.treasury += rates; this.stats.rates = rates; budgetRevenue(this,rates,'rates');
+    // Like any country town, the council relies on state and federal grants.
+    budgetRevenue(this, dailyGrants(this), 'grant');
+    financeDailyClose(this);
+    // Villagers bank anything over $250 (money saved, not spent in town).
+    for (const v of this.villagers) if (v.wallet > 250) { v.savings = (v.savings || 0) + v.wallet - 250; v.wallet = 250; }
+    // End-of-day books: public takings go to the council; a business keeps a $50 float, pays
+    // 35% of the rest in business rates and shares half of what's left with its staff.
+    for (const p of this.places.values()) {
+      if (p.till <= 0) continue;
+      if (PUBLIC.has(p.id) || p.kind === 'utility') { c.treasury += p.till; p.till = 0; continue; }
+      const surplus = p.till - 50; if (surplus <= 0) continue;
+      const rate = surplus * 0.35, staff = this.villagers.filter((v) => v.work === p.id), share = staff.length ? (surplus - rate) * 0.5 : 0;
+      p.till -= rate + share; c.treasury += rate; noteRates(this, p, rate);
+      for (const v of staff) v.wallet += share / staff.length;
+    }
+    c.weather = WEATHER[Math.floor(this.rand() * WEATHER.length)]; // Ballots stay locked until this election finishes.
+    for (const k of SERVICES) c.services[k] = clamp(c.services[k] - (k === 'roads' ? 0.45 : 0.25) - this.rand() * 0.5, 0, 100);
+    c.indicators.environment = clamp(100 - c.indicators.pollution, 0, 100);
+    // Mood follows what people lived through yesterday: power cuts, empty shelves, worn services.
+    const y = this.yesterday, worn = SERVICES.some((k) => c.services[k] < 50);
+    // About 20 empty shelves a day is ordinary small-town life; far more is felt.
+    const mood = (y.powerCutHours ? -3 : 0) - (y.stockouts > 60 ? 2 : y.stockouts > 35 ? 1 : 0) + (worn ? -2 : 0);
+    c.indicators.happiness = clamp(c.indicators.happiness + (mood || 1), 0, 100);
+    maintainServices(this);
+    if (this.day >= c.electionDay) this.election();
+    this.log(`Day ${this.day} begins: ${c.weather} weather. The 6:40 freight train is due at the Rail Depot.`);
+  }
+
+  // ── Town finances and utilities ──
+  // A sale at a till: the town takes its tax, the shop keeps the rest.
+  sale(shop, price) { const tax = Math.round(price * this.civic.taxRate * 100) / 100; noteSale(this, shop, price); shop.till += price - tax; this.civic.treasury += tax; this.stats.taxes += tax; budgetRevenue(this,tax,'tax'); }
+  ok(service) { return this.civic.services[service] >= 35; }
+  gridPowered(customerId) {
+    const c=this.civic.powerGrid?.customers?.[customerId];
+    return c ? c.served >= c.demand : this.civic.supply.ok;
+  }
+  recordPowerEvent(type, lineId, actor, cause) {
+    const record={ id:'grid-'+(++this.powerGridEventSeq), day:this.day, minute:this.minute,
+      type, actor, locationId:lineId, cause };
+    this.powerGridEvents.push(record);
+    if(this.powerGridEvents.length>80)this.powerGridEvents.shift();
+    return record;
+  }
+  // Faults are explicit actions, not random arbitrary percentages. A later
+  // hourly model step recalculates exactly which customers lose supply.
+  faultPowerLine(lineId) {
+    if(!POWER_LINE_IDS.includes(lineId)) return 'Unknown power line.';
+    if(this.civic.powerLines[lineId])return 'That feeder is already out of service.';
+    this.civic.powerLines[lineId]=true;
+    this.recordPowerEvent('power-line-failed',lineId,'system:test-scenario','simulated feeder fault');
+    this.log('Electricity fault reported on '+lineId+'. Distribution will be reassessed this hour.');
+    this.updatePowerGrid();
+    return 'Fault recorded on '+lineId+'. Check the Town Ledger for affected services.';
+  }
+  repairPowerLine(lineId) {
+    if (!POWER_LINE_IDS.includes(lineId)) return 'Unknown power line.';
+    return requestFeeder(this,lineId);
+  }
+  updatePowerGrid() {
+    const h=Math.floor(this.minute/60), c=this.civic;
+    const demand=townPowerDemands(h,c.supply.powerDemand);
+    const previous=c.powerGrid;
+    c.powerGrid=distributePower({generation:Math.max(0,Math.floor(c.supply.power)),
+      demands:demand, failedLines:c.powerLines});
+    c.supply.ok=c.powerGrid.unserved===0;
+    if(previous) {
+      const old=new Set(previous.affected), now=new Set(c.powerGrid.affected);
+      const newly=[...now].filter(id=>!old.has(id));
+      const recovered=[...old].filter(id=>!now.has(id));
+      if(newly.length)this.log('Power interrupted at '+newly.map(id=>c.powerGrid.customers[id].name).join(', ')+'.');
+      if(recovered.length)this.log('Power restored to '+recovered.map(id=>c.powerGrid.customers[id].name).join(', ')+'.');
+    }
+    return c.powerGrid;
+  }
+  rubbish(n) { this.civic.homes.rubbish += n * 0.5; this.civic.homes.recyclables += n * 0.5; }
+
+  // Power, water, wastewater, waste and industry, once an hour.
+  utilitiesHour(h, at) {
+    const c = this.civic, power = this.place('power'), water = this.place('waterworks'), sewage = this.place('sewage');
+    const day = h >= 7 && h <= 18;
+    const solar = day ? ({ sunny: 25, cloudy: 14, windy: 18, rainy: 8 })[c.weather] : 0;
+    const demand = 30 + (day ? 8 : 0) + (h >= 17 && h <= 23 ? 10 : 0);
+    // The generators burn only what the panels can't cover: one drum per 15 units.
+    const fuelNeed = Math.ceil(Math.max(0, demand - solar) / 15);
+    const thermal = (power.stock.fuel || 0) >= fuelNeed && this.ok('power') ? Math.max(0, demand - solar) : 0;
+    if (thermal) power.stock.fuel -= fuelNeed;
+    c.supply.power = this.ok('power') ? solar + thermal : 0; c.supply.powerDemand = demand;
+    const wasOk = c.supply.ok;
+    this.updatePowerGrid();
+    if (!c.supply.ok) this.stats.powerCutHours++;
+    if (!c.supply.ok && wasOk) this.log('Electricity shortage: check affected feeders and customers in the Town Ledger.');
+    if (c.supply.ok && !wasOk) this.log('Full electricity supply has been restored to all connected customers.');
+    if (this.gridPowered('waterworks') && this.ok('water')) water.stock.water = Math.min(250, (water.stock.water || 0) + 25);
+    const need = 16 + (day ? 4 : 0), got = Math.min(need, water.stock.water || 0);
+    water.stock.water -= got; c.supply.water = got; c.supply.waterDemand = need;
+    const wasWater = c.supply.waterOk; c.supply.waterOk = got >= need;
+    if (!c.supply.waterOk && wasWater) this.log('Water restrictions: the Water Works cannot keep up.');
+    sewage.stock.wastewater = (sewage.stock.wastewater || 0) + Math.floor(got * 0.8);
+    if (this.gridPowered('sewage') && this.ok('sewage')) { sewage.stock.wastewater = Math.max(0, sewage.stock.wastewater - 22); c.indicators.pollution = clamp(c.indicators.pollution - 0.2, 0, 100); }
+    if (sewage.stock.wastewater > 70) { c.indicators.pollution = clamp(c.indicators.pollution + 2, 0, 100); if (h % 4 === 0) this.log('The Wastewater Works is backed up and polluting the creek.'); }
+    // Bin day twice a day: rubbish to the Waste Depot, recycling to the Recycling Centre.
+    if ((h === 6 || h === 15) && this.ok('waste') && this.ok('roads')) {
+      const r = Math.floor(c.homes.rubbish), y = Math.floor(c.homes.recyclables);
+      c.homes.rubbish -= r; c.homes.recyclables -= y;
+      this.place('landfill').stock.rubbish += r; this.place('recycling').stock.recyclables += y; this.stats.landfill += r;
+    }
+    const rec = this.place('recycling');
+    if (at('recycling').length && rec.stock.recyclables >= 4) { const n = Math.min(14, rec.stock.recyclables); rec.stock.recyclables -= n; rec.stock.scrap += Math.floor(n / 2); this.stats.recycled += n; }
+    if (rec.stock.scrap >= 8) { rec.out.scrap = (rec.out.scrap || 0) + rec.stock.scrap; rec.stock.scrap = 0; }
+    const fo = this.place('foundry');
+    if (at('foundry').length && this.gridPowered('industry')) {
+      if ((fo.stock.ore || 0) >= 2) { fo.stock.ore -= 2; fo.stock.metal = (fo.stock.metal || 0) + 1; }
+      if ((fo.stock.scrap || 0) >= 4) { fo.stock.scrap -= 4; fo.out.parts = (fo.out.parts || 0) + 2; }
+    }
+    if (h === 16 && (fo.stock.metal || 0) >= 14) { const n = fo.stock.metal - 4; fo.stock.metal = 4; fo.till += n * 12; this.log(`The foundry exported ${n} tonnes of metal by rail for $${n * 12}.`); }
+    if (h === 8 && (this.place('power').stock.fuel || 0) < 60) this.log('The Power Station is low on fuel; a truck is due from the depot.');
+    // Post: letters the visitor posts arrive the next day with the postie.
+    if (h === 15) { const due = c.letters.filter((l) => l.day < this.day && !l.delivered); for (const l of due) l.delivered = true; if (due.length) { this.stats.letters += due.length; this.log(`The postie delivered ${due.length} letter${due.length > 1 ? 's' : ''} you posted.`); } }
+  }
+
+  election() { return civicElection(this); }
+  holdCouncilMeeting() { return councilMeeting(this); }
+  proposeCouncilMotion(type,value) { return proposeMotion(this,type,value); }
+  governmentReport() { return govSummary(this); }
+  civicChat(v) { return civicDialogue(this,v); }
+  // ── The visitor (the player): wallet, bank, bag and civic actions. Each returns a message. ──
+  shelves(p) { return p.id === 'bakery' ? p.out : p.stock; }
+  buyItem(shopId, good) {
+    const p = this.place(shopId), me = this.civic.player, price = GOODS[good].price;
+    if (!this.open(p)) return `The ${p.name} is closed — it opens at ${fmt(p.opens)}.`;
+    if (!(this.shelves(p)[good] > 0)) return `Sorry, sold out of ${GOODS[good].name}. The next truck should bring more.`;
+    if (me.wallet < price) return `You need $${price} but only have $${me.wallet} — try the Community Bank.`;
+    this.shelves(p)[good]--; me.wallet -= price; this.sale(p, price); receipt(this, 'purchase', `${GOODS[good].name} at ${p.name}`, -price);
+    me.bag[good] = (me.bag[good] || 0) + 1; this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
+    this.log(`A visitor bought ${GOODS[good].name} at the ${p.name}.`);
+    return `You buy ${amount(good, 1)} for $${price}. It's in your bag.`;
+  }
+  sellItem(shopId, good) {
+    const p = this.place(shopId), me = this.civic.player, pay = Math.max(1, Math.floor(GOODS[good].price * 0.6));
+    if (!(me.bag[good] > 0)) return `You don't have any ${GOODS[good].name}.`;
+    if (p.till < pay) return `The ${p.name} can't afford to buy it back right now.`;
+    me.bag[good]--; this.shelves(p)[good] = (this.shelves(p)[good] || 0) + 1; p.till -= pay; me.wallet += pay; recordEarning(this, pay); receipt(this, 'sale', `Sold ${GOODS[good].name} to ${p.name}`, pay);
+    return `The ${p.name} buys it back for $${pay}.`;
+  }
+  eatItem(good) { return eatPlayer(this,good); }
+  bookHotel() { return hotelCheckIn(this); }
+  sleepHotel(room=null) { return sleepPlayer(this,'hotel',room); }
+  needsReport() { return needsReport(this); }
+  bank(op, n) {
+    const me = this.civic.player, from = op === 'deposit' ? 'wallet' : 'bank', to = op === 'deposit' ? 'bank' : 'wallet';
+    if (!this.open(this.place('bank'))) return 'The bank is closed (9:00–16:00).';
+    const m = Math.min(n, me[from]);
+    if (m <= 0) return `Nothing to ${op}.`;
+    me[from] -= m; me[to] += m;
+    noteBank(this, `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}.`); receipt(this, 'bank', `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}`, 0);
+    return `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}. Wallet $${me.wallet}, savings $${me.bank}.`;
+  }
+  creditReport() { return creditReport(this); }
+  payBills() { return payBills(this); }
+  jobsReport() { return jobsReport(this); }
+  startJob(id) { return startJob(this, id); }
+  doTask(t) { return performTask(this, t); }
+  cancelJob() { return abandonJob(this); }
+  finishJob() { return finishJob(this); }
+  jobSupervisors(site) { return supervisors(this, site); }
+  economyReport() { return economyReport(this); }
+  borrow(n) { return borrow(this, n); }
+  repay(n) { return repay(this, n); }
+  vote(name) { return castCivicVote(this,name); }
+  postLetter(to) {
+    const me = this.civic.player;
+    if (me.wallet < 2) return 'Postage is $2.';
+    me.wallet -= 2; this.civic.treasury += 2; this.civic.letters.push({ to, day: this.day, delivered: false });
+    return `Letter to ${to} posted ($2). The postie delivers it tomorrow afternoon.`;
+  }
+  repair(service) { return submitRequest(this,service); }
+  collectRecycling() {
+    const c = this.civic, n = Math.min(5, Math.floor(c.homes.recyclables));
+    if (!n) return 'No recycling waiting on the kerbs right now.';
+    c.homes.recyclables -= n; this.place('recycling').stock.recyclables += n;
+    const reward = Math.min(c.treasury, n * 2); c.treasury -= reward; c.player.wallet += reward; recordEarning(this, reward);
+    return `You sort ${n} bags of recycling and the council pays you $${reward}.`;
   }
 
   // Production happens on the hour while the right workers are at work.
@@ -243,64 +483,249 @@ export class TownLife {
     const at = (id) => this.villagers.filter((v) => v.work === id && v.step?.kind === 'work');
     for (const p of this.places.values()) {
       if (p.kind === 'farm') {
-        p.growth = clamp(p.growth + (this.isDay() ? 0.04 : 0.01), 0, 1);
+        p.growth = clamp(p.growth + (this.isDay() ? ({ rainy: 0.06, sunny: 0.04, cloudy: 0.035, windy: 0.03 })[this.civic.weather] : 0.01), 0, 1);
         const hands = at(p.id).length;
-        if (hands && this.open(p)) {
-          const n = Math.round((2 + 3 * p.growth) * hands);
+        // Farms stop picking once their shed is full (60), so unsold produce doesn't pile up forever.
+        if (hands && this.open(p) && (p.out[p.makes] || 0) < 60) {
+          const n = Math.round((2 + 3 * p.growth) * hands * (FARM_YIELD[p.makes] || 1));
           p.out[p.makes] = (p.out[p.makes] || 0) + n;
           this.stats.harvested[p.makes] = (this.stats.harvested[p.makes] || 0) + n;
           if (p.makes === 'grain' && p.growth > 0.9) { p.growth = 0.3; this.log(`The wheat paddock was harvested. ${n} bags of grain went into the silo.`); }
         }
       }
     }
+    const h = Math.floor(this.minute / 60);
+    this.utilitiesHour(h, at);
+    const powered = this.gridPowered('bakery');
     const mill = this.place('mill');
     const batch = Math.min(2, Math.floor((mill.stock.grain || 0) / 3));
-    if (at('mill').length && batch) { mill.stock.grain -= 3 * batch; mill.out.flour = (mill.out.flour || 0) + 2 * batch; this.stats.milled += 2 * batch; }
+    if (at('mill').length && batch && powered && (mill.out.flour || 0) < 60) { mill.stock.grain -= 3 * batch; mill.out.flour = (mill.out.flour || 0) + 2 * batch; this.stats.milled += 2 * batch; }
     const bakery = this.place('bakery');
-    if (at('bakery').length) {
+    if (at('bakery').length && powered && this.civic.supply.waterOk) {
       const s = bakery.stock;
-      if ((s.flour || 0) >= 2) { s.flour -= 2; bakery.out.bread = (bakery.out.bread || 0) + 8; this.stats.baked += 8; if ((bakery.out.bread || 0) > 30) bakery.out.bread = 30; }
-      if ((s.flour || 0) >= 1 && (s.lamb || 0) >= 1 && (s.veg || 0) >= 1) { s.flour--; s.lamb--; s.veg--; bakery.out.pie = (bakery.out.pie || 0) + 4; this.stats.baked += 4; }
+      // Bake to a full shelf, not beyond: surplus would only waste flour, lamb and veg.
+      if ((s.flour || 0) >= 2 && (bakery.out.bread || 0) < 48) { s.flour -= 2; bakery.out.bread = (bakery.out.bread || 0) + 8; this.stats.baked += 8; }
+      if ((bakery.out.pie || 0) < 16 && (s.flour || 0) >= 1 && (s.lamb || 0) >= 1 && (s.veg || 0) >= 1) { s.flour--; s.lamb--; s.veg--; bakery.out.pie = (bakery.out.pie || 0) + 4; this.stats.baked += 4; }
     }
-    const h = Math.floor(this.minute / 60);
     if (h === 7) {
       const depot = this.place('depot');
       depot.out.coffee = (depot.out.coffee || 0) + 8; depot.out.tea = (depot.out.tea || 0) + 6; depot.out.parcel = (depot.out.parcel || 0) + 6 + Math.round(this.rand() * 6);
-      this.log('The freight train pulled into the Rail Depot with coffee, tea and the mail.');
+      // Fuel and ore are imports the council pays for.
+      const fuel = (depot.out.fuel || 0) < 60 ? 60 : 0, ore = (depot.out.ore || 0) < 20 ? 20 : 0, cost = fuel * 1 + ore * 2;
+      if (cost && this.civic.treasury >= cost) { depot.out.fuel = (depot.out.fuel || 0) + fuel; depot.out.ore = (depot.out.ore || 0) + ore; this.civic.treasury -= cost; }
+      this.log(`The freight train pulled into the Rail Depot with coffee, tea, the mail${cost ? ', fuel and ore' : ''}.`);
     }
     // Parcels left on doorsteps get taken inside by evening.
     if (h === 19 && this.parcels.length) { this.log(`${this.parcels.length} parcel${this.parcels.length > 1 ? 's were' : ' was'} collected from doorsteps.`); this.parcels = []; }
   }
 
   // ── Trucks ──
+  depotBay(id) {
+    const depot = this.place('depot');
+    // Stagger trucks away from the centre entrance and give each a full 8m bay.
+    // The bay surface is rendered separately from the road and is not a lane.
+    return {x:depot.x + [-16, -7, 9][id], z:ROAD(7)-7.2};
+  }
+  // Road approach. Depot trucks make a short off-carriageway manoeuvre into their marked bay;
+  // every other stop is made in the travelling lane beside the building (a delivery truck
+  // double-parks to unload), so a truck never parks on a footpath over a counter or a worker.
+  routeTruck(t, placeId) {
+    if (placeId === 'depot') {
+      const bay = this.depotBay(t.id);
+      if (Math.hypot(t.x - bay.x, t.z - bay.z) < 0.2) return [];
+      // Run along the lane and swing in over the last ~9 m, so the truck arrives nearly square to
+      // the bay instead of nose-first across the lane.
+      const lane = driveRoute(t, bay), prev = lane.length > 1 ? lane[lane.length - 2] : t, end = lane[lane.length - 1];
+      const dir = Math.sign(bay.x - prev.x) || 1, lead = { x: bay.x - dir * 5.5, z: end.z };
+      return (lead.x - prev.x) * dir > 0.5 ? [...lane.slice(0, -1), lead, bay] : [...lane, bay];
+    }
+    const route = driveRoute(t, { x: this.place(placeId).x, z: ROAD(7) });
+    const stop = route[route.length - 1];
+    return Math.hypot(t.x - stop.x, t.z - stop.z) < 0.2 ? [] : route;
+  }
+  // Where a truck stands to serve a site: in the travelling lane beside the building (it double-parks
+  // to unload), never on the footpath over a counter or a worker.
+  stopAt(t, placeId) {
+    const route = driveRoute(t, { x: this.place(placeId).x, z: ROAD(7) });
+    return route[route.length - 1];
+  }
   driveTruck(t, minutes) {
     const drv = t.driver;
-    const onShift = drv && this.minute >= drv.start && this.minute < drv.end && drv.step?.kind === 'work';
-    if (t.wait > 0) { t.wait -= minutes; return; }
-    // Brakes for anyone standing in the road ahead (the player, villagers crossing).
-    t.braking = t.path.length > 0 && this.blocked(t);
-    if (t.braking) return;
-    if (t.path.length) {
-      let budget = minutes * SEC_PER_MIN * DRIVE;  // ~30 km/h in town
-      while (budget > 0 && t.path.length) {
-        const p = t.path[0], dx = p.x - t.x, dz = p.z - t.z, d = Math.hypot(dx, dz);
-        if (d <= budget) { t.x = p.x; t.z = p.z; budget -= d; t.path.shift(); if (d > 0.01) t.heading = Math.atan2(dx, dz); }
-        else { t.x += (dx / d) * budget; t.z += (dz / d) * budget; t.heading = Math.atan2(dx, dz); budget = 0; }
-      }
-      if (!t.path.length) this.truckArrived(t);
+    const onShift = !!(drv && this.minute >= drv.start && this.minute < drv.end && drv.step?.kind === 'work');
+    t.braking = false;
+    if (t.wait > 0) { t.wait = Math.max(0, t.wait - minutes); return; }
+    const secs = Math.max(0, minutes) * SEC_PER_MIN;
+    // A stop is "in use" from arrival until the truck has driven clear of it; others hold back.
+    if (t.ignoreSite != null && !this.trucks[t.ignoreSite]?.siteAt) t.ignoreSite = null;
+    if (t.siteAt && Math.hypot(t.x - t.siteAt.x, t.z - t.siteAt.z) > TRUCK.site + 1) t.siteAt = null;
+    if (t.reverse > 0) {            // backing out to let a truck that is boxed in turn round
+      const back = Math.min(t.reverse, secs * 3);
+      const trial = { x: t.x - Math.sin(t.heading) * back, z: t.z - Math.cos(t.heading) * back, h: t.heading, reverse: true };
+      if (Math.abs(trial.z - ROAD(7)) <= 4.2 && !this.blocked(t, trial)) { t.x = trial.x; t.z = trial.z; t.reverse -= back; } else t.reverse = 0;   // never reverse off the carriageway
+      t.braking = true; return;
+    }
+    // Heading for the bay with no lead-in left (e.g. after backing out of a standoff): rejoin the
+    // lane and swing in properly instead of cutting diagonally across a neighbour's bay.
+    if (t.path.length === 1 && !t.retreat && !t.pulling) {
+      const bay = this.depotBay(t.id);
+      if (Math.hypot(t.path[0].x - bay.x, t.path[0].z - bay.z) < 0.5 && Math.abs(t.x - bay.x) > 6.5 && Math.abs(t.z - bay.z) > 3) t.path = this.routeTruck(t, 'depot');
+    }
+    if (!t.path.length) {
+      if (!onShift && !t.job && t.state !== 'parked') {
+        t.leg = 'return'; t.state = 'returning to the depot parking bays';
+        t.path = this.routeTruck(t, 'depot');
+        if (!t.path.length) { t.state = 'parked'; t.leg = null; }
+      } else if (onShift && !t.job && t.state !== 'returning to the depot parking bays') this.pickJob(t);
+      // Already standing at the pickup or drop-off (e.g. a depot job from the depot's own bay):
+      // there is nothing to drive, so the stop happens now instead of never.
+      if (!t.path.length && t.job) { if (!this.squareUp(t, secs)) this.truckArrived(t); return; }
+    }
+    if (!t.path.length) {
+      // Parked: settle square to the bay, turning like a vehicle rather than snapping round.
+      if (t.state === 'parked') this.squareUp(t, secs);
       return;
     }
-    if (!onShift) { if (t.state !== 'parked') { t.state = 'parked'; t.path = driveRoute(t, this.stopAt(t, 'depot')); t.job = null; } return; }
-    if (!t.job) this.pickJob(t);
+    let budget = secs * DRIVE, turn = secs * TRUCK.turn;   // metres and radians available this tick
+    // Substep all motion: a full half-town-minute tick is 12 m, and checking collision once per
+    // tick let two trucks jump through one another.
+    for (let guard = 0; (budget > 1e-4 || turn > 1e-4) && t.path.length && guard < 600; guard++) {
+      const p = t.path[0], dx = p.x - t.x, dz = p.z - t.z, d = Math.hypot(dx, dz);
+      if (d < 0.15) { t.x = p.x; t.z = p.z; t.path.shift(); continue; }   // close enough: arrived at this point
+      const err = angleDiff(Math.atan2(dx, dz), t.heading);
+      const h = Math.abs(err) < 0.01 ? t.heading + err : t.heading + clampAbs(err, turn);
+      turn -= Math.abs(h - t.heading);
+      // Sharp corners are taken as a slow point turn first; shallow ones are driven through.
+      const step = Math.abs(angleDiff(Math.atan2(dx, dz), h)) < 0.5 ? Math.min(budget, d, 0.9) : 0;
+      if (step <= 0 && Math.abs(h - t.heading) < 1e-6) break;
+      const trial = { x: t.x + (dx / d) * step, z: t.z + (dz / d) * step, h };
+      if (this.blocked(t, trial)) { t.braking = true; this.noteBlocked(t, minutes); return; }
+      t.x = trial.x; t.z = trial.z; t.heading = h; budget -= step; t.blockedFor = 0;
+      if (step > 0 && d - step <= 1e-4) { t.x = p.x; t.z = p.z; t.path.shift(); }
+    }
+    if (!t.path.length) {
+      if (this.squareUp(t, secs)) return;
+      if (t.retreat) {              // back in the bay: wait a moment, then plan the trip again
+        t.retreat = false; t.wait = 3;
+        const to = t.job ? (t.leg === 'pickup' ? t.job.from : t.job.to) : 'depot';
+        t.path = this.routeTruck(t, to);
+      }
+      else if (t.leg === 'return' && !t.job) { t.leg = null; t.state = 'parked'; }
+      else this.truckArrived(t);
+    }
   }
 
-  // Each truck has its own bay along the curb so two never stop on the same spot.
-  stopAt(t, id) { const c = this.place(id).curb; return { x: c.x + (t.id - 1) * 8, z: c.z }; }
+  // A truck standing in its depot bay squares up to it (nose along the bay) before it counts as
+  // arrived or parked, so it never sticks out across the lane. True while still turning.
+  squareUp(t, secs) {
+    const bay = this.depotBay(t.id);
+    if (Math.hypot(t.x - bay.x, t.z - bay.z) > 0.3) return false;
+    const err = angleDiff(Math.PI / 2, t.heading);
+    if (Math.abs(err) < 0.02) return false;
+    const h = t.heading + clampAbs(err, secs * TRUCK.turn);
+    if (this.blocked(t, { x: t.x, z: t.z, h })) t.braking = true; else t.heading = h;
+    return true;
+  }
 
-  blocked(t) {
-    const fx = Math.sin(t.heading), fz = Math.cos(t.heading);
-    const near = (p) => { const dx = p.x - t.x, dz = p.z - t.z, ahead = dx * fx + dz * fz; return ahead > 1 && ahead < 8 && Math.abs(dx * fz - dz * fx) < 1.3; };
-    return this.obstacles.some(near) || this.villagers.some((v) => !v.inside && near(v));
+  // Last resort for a jam nothing else untangled: the truck is recalled to its own depot bay (when
+  // that is clear) and plans its trip again, rather than the town's deliveries stopping for good.
+  unjam(t) {
+    const bay = this.depotBay(t.id);
+    if (this.trucks.some((o) => o !== t && boxesOverlap(truckBox(bay.x, bay.z, Math.PI / 2, 0.3), truckBox(o.x, o.z, o.heading)))) { t.blockedFor = 30; return; }
+    t.x = bay.x; t.z = bay.z; t.heading = Math.PI / 2; t.pulling = false; t.retreat = false; t.reverse = 0; t.siteAt = null; t.blockedFor = 0;
+    t.wait = 2; t.path = t.job ? this.routeTruck(t, t.leg === 'pickup' ? t.job.from : t.job.to) : [];
+    this.stats.truckRecalls = (this.stats.truckRecalls || 0) + 1;
+    this.recalls = (this.recalls || 0) + 1;
+  }
+
+  // Two trucks that have each been waiting on the other for a long time: the lower-priority one
+  // (higher id) backs straight out of the way instead of both waiting for ever.
+  noteBlocked(t, minutes) {
+    t.blockedFor = (t.blockedFor || 0) + minutes;
+    // Courtesy only goes so far: after a few minutes a truck stops holding back for another's stop
+    // (bodies and following distance still keep them apart), which breaks waiting circles.
+    if (t.why === 'site' && t.blockedFor > 6 && t.blockedBy != null) t.ignoreSite = t.blockedBy;
+    const o = this.trucks[t.blockedBy];
+    if (t.blockedFor > 8 && o && o.braking && o.blockedBy === t.id && t.id > o.id) { t.reverse = 8; t.blockedFor = 0; }
+    // Boxed in half-way out of a bay by a truck that cannot get past: back into the bay and try again.
+    if (t.blockedFor > 10 && t.pulling && !t.retreat) {
+      t.retreat = true; t.pulling = false; t.blockedFor = 0;
+      t.path = [this.depotBay(t.id)];
+    }
+  }
+
+  // Would the truck run into anything if it moved to `proposed` {x, z, h} (default: where it
+  // stands now)? Trucks are tested as real 6.6 m × 2.2 m footprints plus a safety gap, so two
+  // trucks can never overlap whatever their angle, even beside or behind one another.
+  // People (the player and villagers) block it when they are inside, or just ahead of, the
+  // footprint in the direction it is about to travel.
+  blocked(t, proposed = null) {
+    const at = proposed || { x: t.x, z: t.z, h: t.heading };
+    const h = at.h ?? t.heading;
+    // Pulling out of a depot bay: wait for a gap in the traffic before swinging across the lanes.
+    const bay = this.depotBay(t.id), leaving = t.path[0] && Math.hypot(t.path[0].x - bay.x, t.path[0].z - bay.z) > 0.5;
+    if (proposed && leaving && !proposed.reverse && !t.pulling && !t.retreat && Math.hypot(t.x - bay.x, t.z - bay.z) < 1) {
+      for (const o of this.trucks) {
+        if (o === t || Math.abs(o.z - ROAD(7)) > 4.6) continue;
+        const dx = o.x - t.x, moving = o.path.length > 0 && o.wait <= 0 && !o.braking, closing = moving && dx * Math.sin(o.heading) < 0;   // heading towards our bay
+        if (Math.abs(dx) < 16 || (closing && Math.abs(dx) < 48)) { t.blockedBy = o.id; t.why = 'bay-gap'; return true; }
+      }
+      t.pulling = true;
+    }
+    // Turning in across the lanes to a bay: let through traffic near the bay go by first.
+    const bayHead = t.path[0] && Math.hypot(t.path[0].x - bay.x, t.path[0].z - bay.z) < 0.5;
+    if (proposed && bayHead && !proposed.reverse && !t.retreat && Math.abs(t.z - bay.z) > 3.2 && Math.hypot(t.x - bay.x, t.z - bay.z) < 14) {
+      for (const o of this.trucks) {
+        if (o === t || Math.abs(o.x - bay.x) > 13 || Math.abs(o.z - bay.z) < 1.5) continue;
+        const oBay = this.depotBay(o.id), entering = o.path[0] && Math.hypot(o.path[0].x - oBay.x, o.path[0].z - oBay.z) < 0.5;
+        if (entering && o.id > t.id) continue;     // two trucks turning in: the lower id goes first
+        t.blockedBy = o.id; t.why = 'bay-in'; return true;
+      }
+    }
+    if (t.pulling && Math.abs(t.z - ROAD(7)) < 3.0) t.pulling = false;
+    // Driving needs a following gap; turning on the spot only needs the bodies to clear.
+    const turningOnly = !!proposed && Math.hypot(at.x - t.x, at.z - t.z) < 1e-6;
+    const mine = truckBox(at.x, at.z, h, turningOnly ? 0.05 : TRUCK.gap);
+    for (const o of this.trucks) {
+      if (o === t) continue;
+      const ob = truckBox(o.x, o.z, o.heading);
+      if (boxesOverlap(mine, ob)) {
+        // Bodies already touching: moving AWAY is always allowed, otherwise nothing can ever untangle.
+        if (!turningOnly && boxesOverlap(truckBox(t.x, t.z, t.heading), ob) && Math.hypot(at.x - o.x, at.z - o.z) > Math.hypot(t.x - o.x, t.z - o.z) + 1e-6) continue;
+        t.blockedBy = o.id; t.why = 'body'; return true;
+      }
+    }
+    // Hold back while another truck is serving a stop in this lane, so it has room to turn round.
+    if (!turningOnly && !proposed?.reverse) {
+      for (const o of this.trucks) {
+        if (o === t || !o.siteAt || t.ignoreSite === o.id) continue;
+        const now = Math.hypot(t.x - o.siteAt.x, t.z - o.siteAt.z), then = Math.hypot(at.x - o.siteAt.x, at.z - o.siteAt.z);
+        if (then < TRUCK.site && then < now && Math.abs(at.z - o.siteAt.z) < 5) { t.blockedBy = o.id; t.why = 'site'; return true; }
+      }
+    }
+    const next = t.path.find((p) => Math.hypot(p.x - t.x, p.z - t.z) > 0.1);
+    let fx = proposed?.reverse ? -Math.sin(h) : next ? next.x - t.x : Math.sin(h), fz = proposed?.reverse ? -Math.cos(h) : next ? next.z - t.z : Math.cos(h);
+    const len = Math.hypot(fx, fz) || 1; fx /= len; fz /= len;
+    const rx = fz, rz = -fx;
+    // Keep a real following distance in the same lane (never closer than we already are).
+    if (!turningOnly && !proposed?.reverse) {
+      for (const o of this.trucks) {
+        if (o === t) continue;
+        const ox = o.x - at.x, oz = o.z - at.z, ahead = ox * fx + oz * fz;
+        const still = o.path.length === 0 || o.wait > 0 || o.braking;   // queue up close behind a stopped truck
+        const thr = still ? 8.6 : TRUCK.follow, now = (o.x - t.x) * fx + (o.z - t.z) * fz;
+        // Inside the gap already: never get closer. Outside it: one short step may close up to it.
+        if (ahead > 0 && ahead < thr && Math.abs(ox * rx + oz * rz) < 1.9 && ahead < now && now < thr) { t.blockedBy = o.id; t.why = 'follow'; return true; }
+      }
+    }
+    t.blockedBy = null;
+    // Only people in the way matter: look no further than the end of the current straight leg,
+    // so a pedestrian on the far footpath is not 'in the way' of a truck that is about to turn.
+    const reach = turningOnly ? 0.3 : next ? Math.min(3.5, Math.hypot(next.x - at.x, next.z - at.z) + 0.5) : 3.5;
+    const hit = (q) => {
+      const x = q.x - at.x, z = q.z - at.z, ahead = x * fx + z * fz;
+      return ahead > -TRUCK.hl && ahead < TRUCK.hl + reach && Math.abs(x * rx + z * rz) < TRUCK.hw + 0.5;
+    };
+    return this.obstacles.some(hit) || this.villagers.some((v) => !v.inside && hit(v));
   }
 
   // Finds the most useful load: a destination short of a good that a source has spare.
@@ -312,55 +737,45 @@ export class TownLife {
       ['dairy', 'milk', 'store'], ['dairy', 'milk', 'cafe'], ['dairy', 'milk', 'bakery'], ['coop', 'eggs', 'store'], ['coop', 'eggs', 'cafe'], ['coop', 'eggs', 'bakery'],
       ['sheep', 'lamb', 'butcher'], ['sheep', 'lamb', 'pub'], ['sheep', 'lamb', 'bakery'],
       ['depot', 'coffee', 'cafe'], ['depot', 'coffee', 'store'], ['depot', 'tea', 'store'], ['depot', 'parcel', 'post'],
+      ['depot', 'fuel', 'power'], ['depot', 'ore', 'foundry'], ['recycling', 'scrap', 'foundry'], ['foundry', 'parts', 'hall'],
     ];
     let best = null;
     for (const [from, good, to] of routes) {
       const src = this.place(from), dst = this.place(to);
       const have = src.out[good] || 0, need = (dst.target?.[good] || 0) - (dst.stock[good] || 0);
       if (have < 3 || need < 3 || this.trucks.some((o) => o !== t && o.job?.to === to && o.job?.good === good)) continue;
-      const cost=WHOLESALE[good];
-      const balance=(dst.operating||0)+(dst.till||0);
-      const affordable=cost?Math.floor(balance/cost):20;
-      const quantity=Math.min(20,have,need,affordable);
-      if(quantity<3)continue;
-      const score=need/(dst.target[good]||1)+this.rand()*.1;
-      if(!best||score>best.score)best={from,to,good,n:quantity,score};
+      const score = need / (dst.target[good] || 1) + this.rand() * 0.1;
+      if (!best || score > best.score) best = { from, to, good, n: Math.min(20, have, need), score };
     }
     if (!best) { t.state = 'waiting for an order'; return; }
     t.job = best; t.state = `heading to the ${this.place(best.from).name} for ${GOODS[best.good].name}`;
-    t.path = driveRoute(t, this.stopAt(t, best.from)); t.leg = 'pickup';
+    t.path = this.routeTruck(t, best.from); t.leg = 'pickup';
+    // A vehicle already in its depot bay has arrived at a depot pickup;
+    // an empty route must execute loading, not strand the job forever.
+    if (!t.path.length) this.truckArrived(t);
   }
 
   truckArrived(t) {
     if (!t.job) { t.state = 'parked'; return; }
+    t.siteAt = { x: t.x, z: t.z };
     const src = this.place(t.job.from), dst = this.place(t.job.to), g = t.job.good;
     if (t.leg === 'pickup') {
       const n = Math.min(t.job.n, src.out[g] || 0);
       src.out[g] = (src.out[g] || 0) - n; t.load = { good: g, n };
       t.wait = 4; t.leg = 'deliver'; t.state = `delivering ${amount(g, n)} to the ${dst.name}`;
-      t.path = driveRoute(t, this.stopAt(t, t.job.to));
+      t.path = this.routeTruck(t, t.job.to);
       if (!n) { t.job = null; t.path = []; t.leg = null; t.state = 'found nothing to collect, looking for another job'; }
     } else {
-      const shipped=t.load?.n||0,unit=WHOLESALE[g]||0;
-      const balance=(dst.operating||0)+(dst.till||0);
-      const n=Math.min(shipped,unit?Math.floor(balance/unit):shipped);
-      const invoice=n*unit;
-      if(shipped>n)src.out[g]=(src.out[g]||0)+(shipped-n);
-      const prevTill=dst.till||0,prevOperating=dst.operating||0;
-      if(n&&(!invoice||TownMoney.debitBusiness(dst,invoice))){
-        if(invoice){
-          const fromTill=prevTill-(dst.till||0),fromOperating=prevOperating-(dst.operating||0);
-          if(fromTill>0)this.finance.record('register:'+dst.id,'business:'+src.id,fromTill,'wholesale '+g);
-          if(fromOperating>0)this.finance.record('business:'+dst.id,'business:'+src.id,fromOperating,'wholesale '+g);
-          src.operating=(src.operating||0)+invoice;this.stats.wholesale+=invoice;
-          dst.costOfGoods=(dst.costOfGoods||0)+invoice;
-          src.wholesaleRevenue=(src.wholesaleRevenue||0)+invoice;
-        }
-        dst.stock[g]=(dst.stock[g]||0)+n;
-        this.stats.deliveries++;this.stats.delivered[g]=(this.stats.delivered[g]||0)+n;
-        if(n>=8||this.rand()<.3)this.log((t.driver?.name||'A truck')+' delivered '+amount(g,n)+' to the '+dst.name+' for $'+invoice+'.');
-      }else if(n){src.out[g]=(src.out[g]||0)+n;}
-      t.load=null;t.job=null;t.wait=4;t.state='unloaded, looking for the next job';
+      const n = t.load?.n || 0;
+      dst.stock[g] = (dst.stock[g] || 0) + n;
+      // The buyer pays the supplier wholesale (half retail); the council pays for public stores.
+      const cost = n * GOODS[g].price * 0.5, payer = PUBLIC.has(dst.id) || dst.kind === 'utility' ? null : dst;
+      const paid = payer ? Math.min(cost, Math.max(0, payer.till)) : Math.min(cost, this.civic.treasury);
+      if (payer) payer.till -= paid; else this.civic.treasury -= paid;
+      src.till += paid;
+      this.stats.deliveries++; this.stats.delivered[g] = (this.stats.delivered[g] || 0) + n;
+      if (n >= 8 || this.rand() < 0.3) this.log(`${t.driver?.name || 'A truck'} delivered ${amount(g, n)} to the ${dst.name}.`);
+      t.load = null; t.job = null; t.wait = 4; t.state = 'unloaded, looking for the next job';
     }
   }
 
@@ -370,8 +785,9 @@ export class TownLife {
     const m = this.minute, home = this.doorstep(v), work = this.workSpot(v);
     const sleepFrom = v.job === 'baker' && v.start < 6 * 60 ? 20 * 60 + 30 : 22 * 60 + 30;
     const wake = Math.min(v.start - 75, 6 * 60 + 30);
-    const asleep = m >= sleepFrom || m < wake;
+    const asleep = m >= sleepFrom || m < wake || (v.fatigue>=94 && m >= v.end);
     if (asleep) return this.goThen(v, home, { kind: 'sleep', at: 'home', until: wake < m ? wake + 24 * 60 : wake, activity: 'asleep at home' });
+    if (v.hunger>=82 && m>=wake && !v.doneToday.breakfast) v.memory='very hungry, looking for breakfast';
     if (!v.doneToday.breakfast) {
       v.doneToday.breakfast = true;
       const meal = this.cookable(v, 'breakfast');
@@ -409,6 +825,9 @@ export class TownLife {
       const near = ['bakery', 'store'].find((id) => this.open(this.place(id)) && (id === 'bakery' ? this.place(id).out.pie : this.place(id).stock.bread));
       if (near && v.wallet >= 5) return this.goThen(v, this.place(near).front, { kind: 'snack', at: near, good: near === 'bakery' ? 'pie' : 'bread', dur: 8, activity: `picking up ${near === 'bakery' ? 'a pie' : 'some bread'} for tea` });
     }
+    // After ordinary work, meals and shopping: an optional public election forum.
+    // Quiet residents aren't coerced into a conversation or pulled from work.
+    if (attendPublicForum(this,v)) return v.step;
     // Leisure.
     const r = this.rand();
     if (m >= 19 * 60 && r < 0.35 && this.open(this.place('pub'))) return this.goThen(v, this.place('pub').front, { kind: 'idle', at: 'pub', dur: 60 + this.rand() * 60, activity: 'having a yarn at the pub' });
@@ -480,12 +899,14 @@ export class TownLife {
   eat(v, name, need) {
     for (const [k, n] of Object.entries(need || {})) v.pantry[k] = Math.max(0, (v.pantry[k] || 0) - n);
     v.hunger = 0; v.lastMeal = { name, at: this.minute, day: this.day };
+    v.missedMeals=0;
     v.meals.unshift(`${name} (${fmt(this.minute)})`); v.meals.length = Math.min(v.meals.length, 5);
-    this.stats.meals++;
+    this.stats.meals++; this.rubbish(1);
   }
 
   liveVillager(v, minutes) {
     v.hunger = clamp(v.hunger + minutes * (v.step?.kind === 'sleep' ? 0.04 : 0.08), 0, 100);
+    if(v.fatigue>92 && v.step?.kind==='work')v.memory='struggling to stay awake at work';
     if (v.engaged) return;                   // chatting with the player: stands still
     if (v.path.length) {
       let budget = minutes * SEC_PER_MIN * (v.bike ? BIKE : WALK);
@@ -541,17 +962,19 @@ export class TownLife {
     const [dish, price] = menu[Math.floor(this.rand() * menu.length)];
     const uses = where === 'pub' ? ['lamb', 'veg', 'pie'] : ['bread', 'eggs', 'milk', 'coffee'];
     const ok = uses.some((g) => (p.stock[g] || 0) > 0);
+    if (!ok) this.stats.stockouts++;
     if (!ok || v.wallet < price) { v.activity = `found the ${p.name} out of food`; this.log(`The ${p.name} ran out of food and had to turn ${v.name} away.`); return; }
     for (const g of uses) if ((p.stock[g] || 0) > 0) { p.stock[g]--; break; }
-    v.wallet -= price; p.till += price; p.grossSales=(p.grossSales||0)+price; this.finance.record('npc:'+v.id,'register:'+p.id,price,'restaurant meal'); this.stats.mealsOut++;
+    v.wallet -= price; this.sale(p, price); this.stats.mealsOut++;
     this.eat(v, dish); v.activity = `${v.step.activity} — ${dish}`;
   }
 
   // Buys one item and eats it on the spot (a roll for breakfast, a pie for lunch).
   snack(v, shopId, good) {
     const shop = this.place(shopId), src = shopId === 'bakery' ? shop.out : shop.stock, price = GOODS[good].price;
+    if (this.open(shop) && !(src[good] > 0)) this.stats.stockouts++;
     if (!this.open(shop) || !(src[good] > 0) || v.wallet < price) { v.memory = `the ${shop.name} had no ${GOODS[good].name} left`; v.activity = `found the ${shop.name} out of ${GOODS[good].name}`; return; }
-    src[good]--; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.finance.record('npc:'+v.id,'register:'+shop.id,price,'snack '+good); this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
+    src[good]--; v.wallet -= price; this.sale(shop, price); this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
     this.eat(v, good === 'pie' ? 'a meat pie from the Bakery' : 'a fresh bread roll');
   }
 
@@ -563,45 +986,38 @@ export class TownLife {
     for (const g of items) {
       const n = g === 'veg' || g === 'bread' ? 2 : 1;
       const have = src[g] || 0, price = GOODS[g].price * n;
-      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.finance.record('npc:'+v.id,'register:'+shop.id,price,'groceries '+g); this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
+      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; this.sale(shop, price); this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
       else missing.push(GOODS[g].name);
     }
     if (Object.keys(bag).length) v.carrying = bag;
+    this.stats.stockouts += missing.length;
     if (missing.length) { v.memory = `the ${shop.name} was out of ${missing.join(' and ')}`; if (this.rand() < 0.5) this.log(`${v.name} found the ${shop.name} out of ${missing.join(' and ')}.`); }
   }
 
-  // Workers are paid at the end of each shift; the money comes back through the shops.
-  pay(v){
-    const base=WAGES[v.job]||45;
-    const arrears=v.wageArrears||0;
-    const wage=(this.isPublicPayroll(v.work)?this.treasury:(this.place(v.work)?.till||0)+(this.place(v.work)?.operating||0))>=base+arrears
-      ?base+arrears:base;
-    v.paidDay=this.day;
-    const p=this.place(v.work),beforeTill=p?.till||0,beforeOperating=p?.operating||0;
-    if(this.payWageSource(v.work,wage)){
-      v.wallet+=wage;this.stats.wagesPaid+=wage;
-      v.wageArrears=Math.max(0,arrears-(wage-base));
-      if(this.isPublicPayroll(v.work)){
-        const stateFunded=v.work==='school'||v.work==='clinic';
-        this.finance.record(stateFunded?'state':'council','npc:'+v.id,wage,'public wages and arrears '+v.job);
-        const field=stateFunded?'stateSpending':'councilSpending';
-        this.finance.daily[field]+=wage;
-        this.finance.lifetime[field]+=wage;
-      }else if(p){
-        const cash=beforeTill-(p.till||0),bank=beforeOperating-(p.operating||0);
-        if(cash>0)this.finance.record('register:'+p.id,'npc:'+v.id,cash,'wages '+v.job);
-        if(bank>0)this.finance.record('business:'+p.id,'npc:'+v.id,bank,'wages '+v.job);
-        p.payrollPaid=(p.payrollPaid||0)+wage;
-      }
-      const withheld=this.finance.taxNpcWage(v,wage);
-      if(withheld)this.log(v.name+' paid $'+withheld+' income tax to council.');
-      if(wage>base)this.log(v.name+' received $'+(wage-base)+' of previously unpaid wages.');
-      this.log(v.name+' was paid $'+wage+' gross from '+(this.isPublicPayroll(v.work)?'council':p?.name)+'.');
-    }else{
-      v.wageArrears=arrears+base;
-      this.stats.wagesOwed+=base;
-      this.log(v.name+' is owed $'+v.wageArrears+' by '+(p?.name||'the town')+'.');
+  // Workers are paid at the end of each shift by their employer's till, or by the council for
+  // public jobs (and when a business can't cover it). Programmers bring money in from clients
+  // outside town. Money moves, it isn't made.
+  pay(v) {
+    v.paidDay = this.day;
+    const base = WAGES[v.job] || BASE_WAGE, employer = v.work === 'home' ? null : this.place(v.work);
+    // Unpaid wages from earlier shifts are owed and paid when there is money to pay them.
+    const wage = v.job === 'programmer' ? base : base + (v.wageArrears || 0);
+    let paid = 0, fromCouncil = 0;
+    if (v.job === 'programmer') paid = base;                          // clients outside town pay; PAYG is withheld below
+    else {
+      if (employer && !PUBLIC.has(employer.id) && employer.till > 0) { paid = Math.min(wage, employer.till); employer.till -= paid; bizStats(this, employer.id).wages += paid; }
+      if (paid < wage && stateFunded(v.work)) paid += drawState(this, wage - paid);
+      const rest = Math.min(wage - paid, this.civic.treasury); this.civic.treasury -= rest; paid += rest; fromCouncil = rest;
+      if (fromCouncil) noteCouncilWage(this, fromCouncil);
     }
+    v.wallet += paid; this.stats.wages += paid;
+    if (v.job !== 'programmer') {
+      const short = Math.max(0, wage - paid);
+      v.wageArrears = Math.min(base * 6, Math.round(short * 100) / 100);
+      if (short > 0) this.log(`${v.name} is owed $${Math.round(short)} in wages.`);
+    }
+    const tax = withhold(this, v, paid);
+    if (tax && this.rand() < 0.1) this.log(`${v.name} paid $${tax} income tax.`);
   }
 
   // ── For chat, the guide and the ledger ──
@@ -609,27 +1025,36 @@ export class TownLife {
     const last = v.lastMeal ? `${v.lastMeal.name} at ${fmt(v.lastMeal.at)}${v.lastMeal.day !== this.day ? ' yesterday' : ''}` : 'nothing yet today';
     const pantry = Object.entries(v.pantry).filter(([, n]) => n > 0).map(([k, n]) => amount(k, n)).join(', ') || 'nothing much';
     return { name: v.name, job: v.job, workplace: v.work === 'home' ? 'from home' : this.place(v.work).name, home: `${v.home.coordinate} (${v.home.name})`,
-      now: v.activity, lastMeal: last, recentMeals: v.meals, hungry: v.hunger > 60, pantry, wallet: v.wallet, carrying: v.carrying, memory: v.memory || null };
+      now: v.activity, lastMeal: last, recentMeals: v.meals, hungry: v.hunger > 60,
+      fatigue: Math.round(v.fatigue), tired: v.fatigue>70, pantry, wallet: v.wallet, carrying: v.carrying, memory: v.memory || null };
   }
   news(n = 6) { return this.events.slice(0, n); }
   ledger() {
-    const shops = [...this.places.values()].filter(p=>p.target).map(p=>({id:p.id,name:p.name,stock:p.stock,till:p.till,operating:p.operating,grossSales:p.grossSales,open:this.open(p)}));
+    const shops = [...this.places.values()].filter((p) => p.target && !['utility', 'industry', 'hall'].includes(p.kind)).map((p) => ({ name: p.name, stock: p.stock, till: Math.round(p.till), open: this.open(p) }));
     const farms = [...this.places.values()].filter((p) => p.kind === 'farm').map((p) => ({ name: p.name, makes: GOODS[p.makes].name, waiting: p.out[p.makes] || 0, growth: p.growth }));
-    return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, economy:this.finance.audit(), trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
-      finance:{treasury:this.treasury,player:this.money.snapshot(),wagesPaid:this.stats.wagesPaid,wagesOwed:this.stats.wagesOwed,wholesale:this.stats.wholesale},
+    return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
+      civic: this.civic, utilities: { fuel: this.place('power').stock.fuel, reservoir: this.place('waterworks').stock.water, wastewater: this.place('sewage').stock.wastewater, landfill: this.place('landfill').stock.rubbish, recycling: this.place('recycling').stock.recyclables, parts: this.place('hall').stock.parts },
       population: this.villagers.length, atWork: this.villagers.filter((v) => v.step?.kind === 'work').length, asleep: this.villagers.filter((v) => v.step?.kind === 'sleep').length };
   }
 
   // Saves just what matters to resume tomorrow where the town left off.
-  snapshot() { return {day:this.day,minute:this.minute,treasury:this.treasury,money:this.money.snapshot(),finance:this.finance.snapshot(),places:[...this.places.values()].map(p=>[p.id,p.stock,p.out,p.till,p.growth,p.supervisedBatch||null,p.operating,p.grossSales,p.payrollPaid||0,p.costOfGoods||0,p.wholesaleRevenue||0,p.lifetimeExpenses||0,p.unpaidBills||0,p.dailyExpenses||0]),villagers:this.villagers.map(v=>[v.id,v.pantry,v.wallet,v.lastMeal,v.meals,v.paidDay||null,v.wageArrears||0,v.housingArrears||0])}; }
+  snapshot() { return { saveVersion:2, day: this.day, minute: this.minute, powerGridEvents:this.powerGridEvents, powerGridEventSeq:this.powerGridEventSeq, civic: this.civic, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth]), villagers: this.villagers.map((v) => [v.id, v.pantry, v.wallet, v.lastMeal, v.meals, v.hunger, v.fatigue, v.restedMinutes, v.wageArrears || 0, v.rateArrears || 0, v.housingArrears || 0]), hotelBookings:this.place('hotel').bookings }; }
   restore(s) {
     if (!s || typeof s !== 'object') return;
-    this.day=s.day||1;this.minute=s.minute||7*60;
-    if(Number.isSafeInteger(s.treasury)&&s.treasury>=0)this.treasury=s.treasury;
-    this.money.restore(s.money);
-    if(s.finance)this.finance.restore(s.finance);
-    else this.finance.lastClosedDay=this.day; // do not back-bill users upgrading from old saves
-    for(const [id,stock,out,till,growth,supervisedBatch,operating,grossSales,payrollPaid,costOfGoods,wholesaleRevenue,lifetimeExpenses,unpaidBills,dailyExpenses]of s.places||[]){const p=this.place(id);if(p)Object.assign(p,{stock,out,till,growth:growth??p.growth,supervisedBatch:supervisedBatch||null,operating:Number.isSafeInteger(operating)&&operating>=0?operating:p.operating,grossSales:Number.isSafeInteger(grossSales)&&grossSales>=0?grossSales:0,payrollPaid:payrollPaid||0,costOfGoods:costOfGoods||0,wholesaleRevenue:wholesaleRevenue||0,lifetimeExpenses:lifetimeExpenses||0,unpaidBills:unpaidBills||0,dailyExpenses:dailyExpenses||0});}
-    for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears,housingArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0,housingArrears:housingArrears||0});}
+    this.day = Number.isFinite(s.day) && s.day >= 1 ? s.day : 1;
+    this.minute = Number.isFinite(s.minute) && s.minute >= 0 && s.minute < 1440 ? s.minute : 7 * 60;
+    // v1 saves had no schema tag, event history or feeder faults. They are
+    // retained and naturally migrate to v2 on the next save.
+    this.powerGridEvents=Array.isArray(s.powerGridEvents)?s.powerGridEvents.slice(-80):[];
+    this.powerGridEventSeq=Number.isSafeInteger(s.powerGridEventSeq)?s.powerGridEventSeq:this.powerGridEvents.length;
+    if (s.civic && typeof s.civic === 'object') Object.assign(this.civic, s.civic, { player: { ...this.civic.player, ...(s.civic.player || {}) } });
+    restoreCivic(this,s.civic?.government);
+    initialisePublicLife(this);
+    this.civic.powerLines = this.civic.powerLines && typeof this.civic.powerLines === 'object' ? this.civic.powerLines : {};
+    if(this.civic.supply.powerDemand>0)this.updatePowerGrid();
+    for (const [id, stock, out, till, growth] of s.places || []) { const p = this.place(id); if (p) Object.assign(p, { stock, out, till, growth: growth ?? p.growth }); }
+    for (const [id, pantry, wallet, lastMeal, meals, hunger, fatigue, restedMinutes, wageArrears, rateArrears, housingArrears] of s.villagers || []) { const v = this.villagers[id]; if (v) Object.assign(v, { pantry, wallet, lastMeal, meals: meals || [], hunger: Number.isFinite(hunger)?hunger:v.hunger, fatigue: Number.isFinite(fatigue)?fatigue:v.fatigue, restedMinutes: Number.isFinite(restedMinutes)?restedMinutes:0, wageArrears: Number.isFinite(wageArrears)?wageArrears:0, rateArrears: Number.isFinite(rateArrears)?rateArrears:0, housingArrears: Number.isFinite(housingArrears)?housingArrears:0 }); }
+    this.place('hotel').bookings=Array.isArray(s.hotelBookings)?s.hotelBookings.slice(-12):[];
+    startNeeds(this);
   }
 }

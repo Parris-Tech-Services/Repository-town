@@ -12,13 +12,13 @@ export function bakeryInventory(life){
   bakeryOpen:life.open(p),time:life.time(),day:life.day,
   bakers:life.villagers.filter(v=>v.work==='bakery'),
   working:life.villagers.filter(v=>v.work==='bakery'&&v.step?.kind==='work'&&!v.path?.length),
-  batch:p.supervisedBatch||null
+  batch:(life.civic.bakeryBatch||null)
  };
 }
 export function superviseBread(life,action){
  const p=life.place('bakery'),s=bakeryInventory(life),t=now(life);
- const b=p.supervisedBatch||null;
- const fail=message=>({ok:false,message,batch:p.supervisedBatch||null});
+ const b=life.civic.bakeryBatch||null;
+ const fail=message=>({ok:false,message,batch:life.civic.bakeryBatch||null});
  if(!['mix','oven','unload'].includes(action))return fail('Unknown bakery action');
  if(action==='mix'){
   if(b && (b.phase!=='finished'||b.day===life.day))
@@ -27,17 +27,17 @@ export function superviseBread(life,action){
   if(s.flour<2)return fail('Not enough flour. The bakery needs two bags delivered from the town Mill.');
   if(s.bread>22)return fail('The sales racks are almost full. Sell some bread before starting another batch.');
   p.stock.flour-=2;
-  p.supervisedBatch={phase:'proofing',day:life.day,startedAt:t,readyAt:t+40,flourUsed:2,loaves:8};
+  life.civic.bakeryBatch={phase:'proofing',day:life.day,startedAt:t,readyAt:t+40,flourUsed:2,loaves:8};
   life.log('A supervised bread batch started: two flour bags were mixed into dough at the Bakery.');
-  return {ok:true,message:'Dough mixed. It is proofing for 40 town minutes. Flour inventory decreased by two bags.',batch:p.supervisedBatch};
+  return {ok:true,message:'Dough mixed. It is proofing for 40 town minutes. Flour inventory decreased by two bags.',batch:life.civic.bakeryBatch};
  }
  if(!b)return fail('There is no supervised dough batch. Start at the spiral mixer.');
  if(action==='oven'){
   if(b.phase!=='proofing')return fail(b.phase==='baking'?'Bread is already in the oven.':'There is no dough ready for the oven.');
   if(t<b.readyAt)return fail('Proofing is still underway. Wait '+Math.ceil(b.readyAt-t)+' town minutes.');
-  p.supervisedBatch={...b,phase:'baking',readyAt:t+25};
+  life.civic.bakeryBatch={...b,phase:'baking',readyAt:t+25};
   life.log('Proofed dough went into the Bakery deck oven. The loaves need 25 town minutes.');
-  return {ok:true,message:'The dough has been transferred to the deck oven. Baking takes 25 town minutes.',batch:p.supervisedBatch};
+  return {ok:true,message:'The dough has been transferred to the deck oven. Baking takes 25 town minutes.',batch:life.civic.bakeryBatch};
  }
  if(b.phase==='finished')return fail('Those loaves have already been removed from the oven.');
  if(b.phase!=='baking')return fail('Let the dough proof, then load it into the oven.');
@@ -45,7 +45,7 @@ export function superviseBread(life,action){
  if((p.out.bread||0)>22)return fail('Clear space on the sales rack by selling bread before unloading the oven.');
  p.out.bread=(p.out.bread||0)+8;
  life.stats.baked+=8;
- p.supervisedBatch={...b,phase:'finished',readyAt:t,finishedAt:t};
+ life.civic.bakeryBatch={...b,phase:'finished',readyAt:t,finishedAt:t};
  life.log('The supervised Bakery batch finished: eight fresh loaves reached the sales shelves.');
- return {ok:true,message:'Eight fresh loaves were baked and stocked for sale. The real TownLife bread inventory and baked total increased.',batch:p.supervisedBatch};
+ return {ok:true,message:'Eight fresh loaves were baked and stocked for sale. The real TownLife bread inventory and baked total increased.',batch:life.civic.bakeryBatch};
 }

@@ -56,10 +56,11 @@ function shopfront(b, w, d, h, wall, trim, stripes) {
   if (stripes) { const n = Math.round(w / 1.2); for (let i = 0; i < n; i++) b.add('box', stripes[i % 2], w / n, 0.08, 2.0, -w / 2 + (i + 0.5) * (w / n), 3.05, 7.95, 0.35, 0, 0); }
 }
 function table(b, x, z, w = 2.4, d = 0.9, top = WOOD) {
+  b.solid(w, d, x, z);
   b.block(top, w, 0.08, d, x, 0.82, z);
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) b.block(0x5a4030, 0.08, 0.82, 0.08, x + sx * (w / 2 - 0.1), 0, z + sz * (d / 2 - 0.1));
 }
-function crate(b, x, z, w = 0.9, d = 0.6, y = 0) { b.block(0x9a7448, w, 0.3, d, x, y, z); }
+function crate(b, x, z, w = 0.9, d = 0.6, y = 0) { b.solid(w, d, x, z); b.block(0x9a7448, w, 0.3, d, x, y, z); }
 function shed(b, w, d, h, wall, roof, z0 = 7) {
   b.box(wall, w, h, d, 0, h / 2, z0 - d / 2);
   const r = Math.hypot(w / 2 + 0.4, 1.6), ang = Math.atan2(1.6, w / 2 + 0.4);
@@ -67,9 +68,9 @@ function shed(b, w, d, h, wall, roof, z0 = 7) {
   b.add('box', roof, r, 0.15, d + 0.8, (w / 2 + 0.4) / 2, h + 0.8, z0 - d / 2, 0, 0, -ang);
   b.box(0x3a2a1e, 2.6, 2.8, 0.06, 0, 1.4, z0 + 0.03);
 }
-function tree(b, x, z, s = 1, leaf = 0x4e8a46) { b.cyl(0x6a4a2a, 0.22 * s, 2.4 * s, x, 1.2 * s, z); b.ball(leaf, 1.5 * s, x, 3.2 * s, z); }
+function tree(b, x, z, s = 1, leaf = 0x4e8a46) { b.solid(0.6 * s, 0.6 * s, x, z); b.cyl(0x6a4a2a, 0.22 * s, 2.4 * s, x, 1.2 * s, z); b.ball(leaf, 1.5 * s, x, 3.2 * s, z); }
 function fence(b, x0, x1, z0, z1, gateX) {
-  const rail = (ax, az, bx, bz) => { const len = Math.hypot(bx - ax, bz - az), ry = Math.atan2(bx - ax, bz - az) + Math.PI / 2; for (const y of [0.45, 0.9]) b.box(0xd8cdb8, len, 0.08, 0.06, (ax + bx) / 2, y, (az + bz) / 2, ry); for (let s = 0; s <= len; s += 2.5) b.block(0xc8bca5, 0.1, 1.05, 0.1, ax + (bx - ax) * (s / len), 0, az + (bz - az) * (s / len)); };
+  const rail = (ax, az, bx, bz) => { b.solid(Math.max(0.3, Math.abs(bx - ax)), Math.max(0.3, Math.abs(bz - az)), (ax + bx) / 2, (az + bz) / 2); const len = Math.hypot(bx - ax, bz - az), ry = Math.atan2(bx - ax, bz - az) + Math.PI / 2; for (const y of [0.45, 0.9]) b.box(0xd8cdb8, len, 0.08, 0.06, (ax + bx) / 2, y, (az + bz) / 2, ry); for (let s = 0; s <= len; s += 2.5) b.block(0xc8bca5, 0.1, 1.05, 0.1, ax + (bx - ax) * (s / len), 0, az + (bz - az) * (s / len)); };
   rail(x0, z1, x1, z1); rail(x0, z0, x0, z1); rail(x1, z0, x1, z1);
   if (gateX === undefined) rail(x0, z0, x1, z0); else { rail(x0, z0, gateX - 1.6, z0); rail(gateX + 1.6, z0, x1, z0); }
 }
@@ -154,13 +155,74 @@ const BUILD = {
   square(b) {
     b.box(0xc9c0ac, 24, 0.05, 30, 0, 0.03, -4);
     b.cyl(0xbab6ae, 2.6, 0.7, 0, 0.35, -4); b.cyl(0x6fb8e0, 2.3, 0.1, 0, 0.66, -4); b.cyl(0xbab6ae, 0.35, 2, 0, 1, -4); b.ball(0xbab6ae, 0.6, 0, 2.1, -4);
-    for (const [x, z, r] of [[-6, -4, Math.PI / 2], [6, -4, -Math.PI / 2], [0, 3, Math.PI], [0, -11, 0]]) b.at(x, 0, z, r, () => { b.block(WOOD, 2, 0.08, 0.6, 0, 0.45, 0); b.block(WOOD, 2, 0.5, 0.08, 0, 0.5, -0.3); b.block(DARK, 0.1, 0.45, 0.5, -0.9, 0, 0); b.block(DARK, 0.1, 0.45, 0.5, 0.9, 0, 0); });
+    for (const [x, z, r] of [[-6, -4, Math.PI / 2], [6, -4, -Math.PI / 2], [0, 3, Math.PI], [0, -11, 0]]) b.at(x, 0, z, r, () => { b.solid(2, 0.7, 0, 0); b.block(WOOD, 2, 0.08, 0.6, 0, 0.45, 0); b.block(WOOD, 2, 0.5, 0.08, 0, 0.5, -0.3); b.block(DARK, 0.1, 0.45, 0.5, -0.9, 0, 0); b.block(DARK, 0.1, 0.45, 0.5, 0.9, 0, 0); });
     for (const [x, z] of [[-9, -14], [9, -14], [-9, 5], [9, 5], [-9, -4.5], [9, -4.5]]) tree(b, x, z, 1.1, 0x5a9a50);
     // Saturday-style market stalls along the back.
-    for (const [x, c] of [[-5, 0xd85a4a], [0, 0x3a7ab8], [5, 0xe0b040]]) { b.block(WOOD, 3, 0.9, 1.2, x, 0, -15); b.box(c, 3.4, 0.08, 1.8, x, 2.4, -15); for (const sx of [-1.5, 1.5]) b.block(DARK, 0.08, 2.4, 0.08, x + sx, 0, -14.4); }
+    for (const [x, c] of [[-5, 0xd85a4a], [0, 0x3a7ab8], [5, 0xe0b040]]) { b.solid(3, 1.2, x, -15); b.block(WOOD, 3, 0.9, 1.2, x, 0, -15); b.box(c, 3.4, 0.08, 1.8, x, 2.4, -15); for (const sx of [-1.5, 1.5]) b.block(DARK, 0.08, 2.4, 0.08, x + sx, 0, -14.4); }
     return null;
   },
 };
+// Civic sites across the road (authored like the rest: street side +z, front wall at z = +7).
+Object.assign(BUILD, {
+  hotel(b) {
+    // Road-facing south-side hotel: two floors, reception, guest-room windows.
+    b.box(0xd9b894,14,7,10,0,3.5,2);
+    b.box(0x774b36,15,0.6,11,0,7.3,2);
+    b.box(0x8b6549,15.2,0.25,11.2,0,7.65,2);
+    for(const y of [2.2,5.2])for(const x of [-5,-2.8,2.8,5])
+      b.box(GLASS,1.3,1.6,0.08,x,y,7.05);
+    b.box(0x4e3528,2.2,2.7,0.08,0,1.35,7.08);
+    b.box(0xf3dfb1,4.6,0.55,0.14,0,4.0,7.17);
+    b.box(0x816044,2.5,0.17,1.7,0,0.15,8.0);
+    return {w:14,d:10};
+  },
+  bank(b) {
+    b.box(0xd8d0c0, 14, 6, 10, 0, 3, 2); b.box(0xa89a80, 15, 0.6, 11, 0, 6.3, 2);
+    for (let i = 0; i < 4; i++) b.cyl(WHITE, 0.3, 5.2, -4.5 + i * 3, 2.6, 7.5);
+    b.box(0x8a7a60, 13, 0.3, 2, 0, 0.15, 7.8); b.box(0x2a1e18, 1.8, 2.8, 0.06, 0, 1.4, 7.05);
+    for (const x of [-5, 5]) b.box(GLASS, 1.4, 2, 0.08, x, 2.2, 7.05);
+    return { w: 14, d: 10 };
+  },
+  power(b) {
+    b.box(0x8a9098, 12, 6, 10, -2, 3, 2); b.cyl(0x6a6a70, 0.7, 14, -6, 7, 0); b.cyl(0xc8c4bc, 2.4, 9, 5, 4.5, 0);
+    for (let i = 0; i < 6; i++) b.add('box', 0x23324a, 2.2, 0.08, 1.4, -6 + i * 2.4, 0.9, -5.5, -0.5, 0, 0);
+    b.box(0x2a2a2a, 2, 2.6, 0.06, -2, 1.3, 7.05); b.box(0xe8c23a, 3, 0.4, 0.06, -2, 3.3, 7.05);
+    return { w: 14, d: 10 };
+  },
+  waterworks(b) {
+    b.cyl(0x8ab0c8, 4, 6, 3, 3, -1); b.cone(0x6a8aa8, 4.3, 1.2, 3, 6.6, -1); b.box(0xc8c0b0, 6, 3.5, 5, -4, 1.75, 3);
+    b.box(0x2a2a2a, 1.4, 2.4, 0.06, -4, 1.2, 5.55); b.cyl(0x5a7a9a, 0.3, 4, -1, 2, 5);
+    return { w: 14, d: 10 };
+  },
+  sewage(b) {
+    for (const [x, z] of [[-3.5, 0], [3.5, 0]]) { b.cyl(0x9a9a92, 3, 1.2, x, 0.6, z); b.cyl(0x5a6a4a, 2.7, 0.05, x, 1.2, z); }
+    b.box(0xb8b0a0, 5, 3, 4, 0, 1.5, 5); b.box(0x2a2a2a, 1.4, 2.2, 0.06, 0, 1.1, 7.05);
+    return { w: 13, d: 8 };
+  },
+  fire(b) {
+    b.box(0xb83a32, 13, 6, 10, 0, 3, 2); b.box(0x7a2a24, 13.6, 0.5, 10.6, 0, 6.25, 2);
+    for (const x of [-3.2, 3.2]) { b.box(0xe8e4dc, 4.6, 4.2, 0.06, x, 2.1, 7.05); for (let i = 1; i < 5; i++) b.box(0xb0aca4, 4.6, 0.06, 0.08, x, i * 0.85, 7.08); }
+    b.cyl(0xb83a32, 1.2, 9, 6.5, 4.5, -2); b.box(0xd0d0d0, 2.6, 0.5, 0.06, 0, 5.3, 7.06);
+    return { w: 14, d: 10 };
+  },
+  recycling(b) {
+    shed(b, 12, 8, 4, 0x6a9a5a, 0x4a5a4a);
+    for (let i = 0; i < 4; i++) b.block([0x3a7ab8, 0xe0b040, 0x5aa040, 0xb8413a][i], 1.4, 1.3, 1.1, -4.5 + i * 3, 0, 8.4);
+    return { w: 12, d: 8 };
+  },
+  landfill(b) {
+    for (const [x, z, r] of [[-3, -1, 3.2], [3, 0, 2.6]]) b.ball(0x7a6a50, r, x, 0, z, 0.45);
+    b.box(0xb8b0a0, 4, 2.6, 3, 0, 1.3, 5.2); fence(b, -6.5, 6.5, -6, 6.6);
+    return { w: 13, d: 12 };
+  },
+  foundry(b) {
+    b.box(0x6a5a50, 14, 7, 10, 0, 3.5, 2); b.box(0x4a4a4a, 14.6, 0.5, 10.6, 0, 7.25, 2);
+    for (const x of [-4, 3]) b.cyl(0x4a4040, 0.6, 12, x, 6, -1);
+    b.box(0x2a2a2a, 4, 4, 0.06, 0, 2, 7.05); b.box(0xff8a3a, 3.6, 0.3, 0.07, 0, 4.3, 7.06);
+    return { w: 14, d: 10 };
+  },
+});
+
 // Farm sheds on the lots, with the paddocks across the road.
 const FARM_SHED = {
   sheep: [16, 9, 4, 0xa8a8a0, 0x7a8590], dairy: [16, 10, 4.2, WHITE, 0x5b6670], coop: [10, 7, 3, 0xd8c8a0, 0x8a5a3a],
@@ -204,9 +266,9 @@ function buildField(p, group, statics, glass) {
     // Livestock paddocks: pasture, a fence with a gate on the road side, a trough.
     b.box(0x6fae58, w, 0.03, d, cx, 0.02, cz);
     fence(b, f.x0 + 0.5, f.x1 - 0.5, f.z0 + 0.5, f.z1 - 0.5, cx);
-    b.block(0x8a8a8a, 2.4, 0.5, 0.7, cx + 6, 0, f.z1 - 3);
+    b.solid(2.4, 0.7, cx + 6, f.z1 - 3); b.block(0x8a8a8a, 2.4, 0.5, 0.7, cx + 6, 0, f.z1 - 3);
     const kind = { sheep: { n: 12, body: [0.9, 0.62, 1.2], bodyC: 0xf2efe6, head: 0x2a2420, y: 0.62 }, dairy: { n: 7, body: [1.1, 1.0, 2.0], bodyC: 0xf5f2ea, head: 0x2a2420, y: 1.0 }, coop: { n: 16, body: [0.3, 0.3, 0.38], bodyC: 0xa8582a, head: 0xd83a2a, y: 0.3 } }[p.id];
-    if (p.id === 'coop') b.at(cx - 6, 0, f.z1 - 4, 0, () => { b.block(0xc89a5a, 3, 1.8, 2.2, 0, 0.4, 0); b.pyramid(0x8a4a2a, 3.6, 1, 2.8, 0, 2.7, 0); for (const sx of [-1.2, 1.2]) b.block(DARK, 0.12, 0.4, 0.12, sx, 0, 0); });
+    if (p.id === 'coop') b.at(cx - 6, 0, f.z1 - 4, 0, () => { b.solid(3, 2.2, 0, 0); b.block(0xc89a5a, 3, 1.8, 2.2, 0, 0.4, 0); b.pyramid(0x8a4a2a, 3.6, 1, 2.8, 0, 2.7, 0); for (const sx of [-1.2, 1.2]) b.block(DARK, 0.12, 0.4, 0.12, sx, 0, 0); });
     const bodyGeo = new THREE.SphereGeometry(0.5, 10, 7), headGeo = new THREE.SphereGeometry(0.5, 8, 6);
     const bodies = new THREE.InstancedMesh(bodyGeo, new THREE.MeshLambertMaterial({ color: kind.bodyC }), kind.n);
     const heads = new THREE.InstancedMesh(headGeo, new THREE.MeshLambertMaterial({ color: kind.head }), kind.n);
@@ -282,7 +344,7 @@ const UNIFORM = { farmer: 0x5b7a3a, 'dairy hand': 0x3a6a8a, 'poultry keeper': 0x
   'station master': 0x2a3a5a, programmer: 0x4a4a5a, retired: 0xa88a6a, student: 0x2f5aa8, artist: 0xd86a8a };
 
 // ── Sky ───────────────────────────────────────────────────────────────────
-const DAY_SKY = new THREE.Color(0x96c9f0), NIGHT_SKY = new THREE.Color(0x0b1430), DUSK = new THREE.Color(0xf0a070);
+const GREY = new THREE.Color(0x9aa3ad), DAY_SKY = new THREE.Color(0x96c9f0), NIGHT_SKY = new THREE.Color(0x0b1430), DUSK = new THREE.Color(0xf0a070);
 function makeStars() {
   const n = 500, pos = new Float32Array(n * 3);
   for (let i = 0; i < n; i++) { const a = Math.random() * Math.PI * 2, e = 0.15 + Math.random() * 1.3, r = 160; pos[i * 3] = Math.cos(a) * Math.cos(e) * r; pos[i * 3 + 1] = Math.sin(e) * r; pos[i * 3 + 2] = Math.sin(a) * Math.cos(e) * r; }
@@ -312,8 +374,16 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     const b = statics;
     const kind = BUILD[p.id] ? p.id : p.kind === 'farm' ? 'farm' : p.kind === 'home' ? 'farmhouse' : p.kind === 'park' ? 'square' : p.id;
     let fp;
+    // South-side civic sites face the street (−z) from across the road.
+    if (p.side === 'south') {
+      b.at(p.x, 0, FIELD_Z0 + 7, Math.PI, () => { fp = BUILD[p.id](b); });
+      colliders.push({ x0: p.x - fp.w / 2, x1: p.x + fp.w / 2, z0: FIELD_Z0, z1: FIELD_Z0 + fp.d });
+      const sign = makeLabel(p.name, 'house'); sign.position.set(p.x, 6.2, FIELD_Z0 - 1); group.add(sign); labels.push(sign);
+      spots.push({ key: `place:${p.id}`, id: p.id, pos: new THREE.Vector3(p.x, 0, FIELD_Z0 - 2.4), label: `${p.name} — ${{ bank: 'your account', fire: 'station board', foundry: 'the works' }[p.id] || 'the plant'}` });
+      continue;
+    }
     b.at(p.x, 0, LOT8_Z, 0, () => {
-      if (kind === 'farm') { const [w, d, h, wall, roof] = FARM_SHED[p.id]; shed(b, w, d, h, wall, roof); fp = { w, d }; if (p.id === 'silo') { for (const x of [9, 12]) { b.cyl(0xc8c8c0, 1.4, 9, x, 4.5, -1); b.cone(0xa8a8a0, 1.6, 1.4, x, 9.7, -1); } } }
+      if (kind === 'farm') { const [w, d, h, wall, roof] = FARM_SHED[p.id]; shed(b, w, d, h, wall, roof); fp = { w, d }; if (p.id === 'silo') { for (const x of [9, 12]) { b.solid(2.6, 2.6, x, -1); b.cyl(0xc8c8c0, 1.4, 9, x, 4.5, -1); b.cone(0xa8a8a0, 1.6, 1.4, x, 9.7, -1); } } }
       else fp = BUILD[kind](b);
     });
     if (fp) colliders.push({ x0: p.x - fp.w / 2, x1: p.x + fp.w / 2, z0: LOT8_Z + (fp.front ?? 7) - fp.d, z1: LOT8_Z + (fp.front ?? 7) });
@@ -338,7 +408,19 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     if (p.kind === 'farm') add(p.makes, grid(-5.2, p.makes === 'grain' ? 0.2 : 0.32, 8.4, 2.6, 1.0, 4, 2, 3, p.makes === 'grain' ? 0.32 : 0.14).map((s) => ({ ...s })), out(p.makes), 30);
     if (p.kind === 'farm' && p.makes !== 'grain') for (const x of [-6.2, -5.2, -4.2]) crate(statics, p.x + x, LOT8_Z + 8.4, 0.95, 1.0);
   }
+  // Dedicated rail-depot delivery-vehicle parking: the three buses/trucks
+  // have marked off-road bays (not parked in the 30 km/h traffic lanes).
+  // Paint sits barely above the ground and does not obstruct pedestrians.
+  for (let i=0; i<life.trucks.length; i++) {
+    const bay=life.depotBay(i), x=bay.x,z=bay.z;
+    statics.box(0x59636b,7.4,0.03,3.2,x,0.018,z);
+    for (const side of [-1,1])
+      statics.box(0xf2ecd1,0.10,0.045,3.1,x+side*3.7,0.044,z);
+    statics.box(0xf2ecd1,7.3,0.045,0.10,x,0.044,z-1.58);
+    statics.box(0xe0c35b,1.2,0.046,0.15,x,0.045,z+1.52);
+  }
   group.add(statics.build());
+  colliders.push(...statics.solids);
   const shopGlass = Builder.merge(statics.glass);
   const shopGlassMat = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xffc070, emissiveIntensity: 0 });
   if (shopGlass) group.add(new THREE.Mesh(shopGlass, shopGlassMat));
@@ -376,6 +458,12 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
 
   // Sky dressing.
   const stars = makeStars(); scene.add(stars);
+  // Rain falls in a box around the player on rainy days.
+  const rainPos = new Float32Array(1500 * 3);
+  for (let i = 0; i < 1500; i++) { rainPos[i * 3] = (Math.random() - 0.5) * 60; rainPos[i * 3 + 1] = Math.random() * 22; rainPos[i * 3 + 2] = (Math.random() - 0.5) * 60; }
+  const rainGeo = new THREE.BufferGeometry(); rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
+  const rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0xaac4dd, size: 0.12, transparent: true, opacity: 0.6, depthWrite: false }));
+  rain.visible = false; rain.frustumCulled = false; scene.add(rain);
   const moon = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 12), new THREE.MeshBasicMaterial({ color: 0xf2efe0, fog: false })); scene.add(moon);
   const hemiDay = new THREE.Color(0xffffff), hemiNight = new THREE.Color(0x7a8ac0), bg = new THREE.Color();
 
@@ -421,18 +509,29 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     const day = life.daylight(), dark = THREE.MathUtils.clamp((0.55 - day) / 0.45, 0, 1);
     const dusk = day > 0 && day < 0.6 ? Math.sin((day / 0.6) * Math.PI) * 0.55 : 0;
     bg.copy(NIGHT_SKY).lerp(DAY_SKY, day).lerp(DUSK, dusk);
+    const weather = life.civic.weather, overcast = weather === 'rainy' ? 0.55 : weather === 'cloudy' ? 0.3 : 0;
+    if (overcast) bg.lerp(GREY.clone().multiplyScalar(0.3 + 0.7 * day), overcast);
     if (inTown && !overview) { scene.background.copy(bg); fog.color.copy(bg); }
     else if (inTown) scene.background.copy(bg);
-    hemi.intensity = 0.5 + 1.6 * day; hemi.color.copy(hemiNight).lerp(hemiDay, day);
+    hemi.intensity = (0.5 + 1.6 * day) * (1 - overcast * 0.35); hemi.color.copy(hemiNight).lerp(hemiDay, day);
     const a = ((m / 60 - 6) / 24) * Math.PI * 2;      // sun rises in the east (+x) at 6:00
     sun.position.set(Math.cos(a) * 130, Math.max(8, Math.sin(a) * 140), 50); sun.intensity = 2.0 * day;
     sun.color.setHex(dusk > 0.25 ? 0xffb070 : 0xffe7bf);
-    stars.visible = moon.visible = inTown && dark > 0.2;
+    stars.visible = moon.visible = inTown && dark > 0.2 && !overcast;
+    rain.visible = inTown && !overview && weather === 'rainy';
+    if (rain.visible) {
+      rain.position.set(camera.position.x, 0, camera.position.z);
+      const a2 = rain.geometry.attributes.position;
+      for (let i = 0; i < a2.count; i++) { let y = a2.getY(i) - dt * 14; if (y < 0) y += 22; a2.setY(i, y); }
+      a2.needsUpdate = true;
+    }
     if (stars.visible) { stars.position.copy(camera.position); stars.material.opacity = Math.min(1, dark * 1.2); moon.position.set(camera.position.x - Math.cos(a) * 140, camera.position.y + Math.max(30, -Math.sin(a) * 120), camera.position.z - 60); }
-    town.setNight(dark, m);
+    // A blackout puts out the windows and street lamps (src/world/life.js utilities).
+    const powered = life.civic.powerGrid ? life.civic.powerGrid.served > 0 : life.civic.supply.ok; // a local fault must not darken every lamp
+    town.setNight(powered ? dark : dark * 0.04, m);
     const anyOpenLate = dark > 0.2;
-    shopGlassMat.emissiveIntensity = anyOpenLate ? dark * 0.9 : 0;
-    lightMat.emissiveIntensity = dark > 0.3 ? 1.4 : 0;
+    shopGlassMat.emissiveIntensity = anyOpenLate && powered ? dark * 0.9 : 0;
+    lightMat.emissiveIntensity = dark > 0.3 ? 1.4 : 0;  // vehicle headlights run on their own batteries
     if (!inTown) return;
 
     // Moving things are only updated near the player; far ones are hidden by fog anyway.
@@ -464,7 +563,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
       const t0 = tr.t;
       tr.group.visible = !overview && near(t0.x, t0.z, 120);
       tr.group.position.set(t0.x, 0, t0.z);
-      tr.group.rotation.y += angleDiff(t0.heading, tr.group.rotation.y) * Math.min(1, dt * 6);
+      tr.group.rotation.y = t0.heading;   // the simulation already turns at a realistic rate; smoothing would make the mesh lag its footprint
       tr.load.count = t0.load ? Math.min(10, Math.max(1, Math.round(t0.load.n / 2))) : 0;
       tr.tails.material.emissiveIntensity = t0.braking ? 1.6 : dark > 0.3 ? 0.7 : 0;
     }
@@ -487,7 +586,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     }
   }
 
-  return { life, group, colliders, spots, people, update, save, events, placeFront: (id) => { const p = life.place(id); return { x: p.x, z: LOT8_Z + 12.6 }; } };
+  return { life, group, colliders, spots, people, update, save, events, placeFront: (id) => { const p = life.place(id); return p.side === 'south' ? { x: p.x, z: FIELD_Z0 - 4.4, yaw: Math.PI } : { x: p.x, z: LOT8_Z + 12.6, yaw: 0 }; } };
 }
 
 // What a villager calls out as the player passes, from the time of day and what they're up to.
@@ -497,6 +596,8 @@ const JOB_LINES = { baker: 'Fresh loaves out the front!', farmer: "Wheat's comin
   nurse: 'Keep your fluids up!', mayor: 'Lovely town, isn\'t it?', 'station master': 'Train was on time!', programmer: 'Just one more bug…', retired: 'In my day…', student: 'Got homework.', artist: 'Look at that light!' };
 function greeting(v, minute) {
   const h = minute / 60, pick = (a) => a[Math.floor(Math.random() * a.length)];
+  if (v.step?.kind==='civic-speaker'&&!v.path.length) return pick(['Happy to answer questions about town services.', 'Council forum at the square today.']);
+  if (v.step?.kind==='civic-audience'&&!v.path.length) return pick(['Just here to listen.', 'I have a few questions about local services.']);
   if (v.bike && v.path.length) return pick(['On your left!', 'Ding ding!', "Mornin'!"]);
   if (v.carrying) return pick(['Got the shopping!', 'Heavy bags, these.']);
   if (v.hunger > 70) return pick(['Starving, me.', "Can't wait for tea."]);

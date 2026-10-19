@@ -1,228 +1,292 @@
 import * as THREE from 'three';
+import { FLOOR_SURFACE_Y } from './floor-surfaces.js';
 
-// A practical small-town Australian production bakery. Rooms are zoned in
-// workflow order: deliveries -> ingredient store -> mixer -> proofer ->
-// guarded ovens -> cooling and bagging -> shop counter -> customer.
-// Clear 2.7 m central corridor; no blocking "teleport" collision box.
-const X=8.2, F=6, B=-17.5, H=4.1, A=1.4, TH=.16;
-export const BAKERY_ROOMS=[
-  'Bread shop & display', 'Main circulation & bakery passage',
-  'Mixing & preparation', 'Baking & ovens',
-  'Dough proofing', 'Cooling & packing',
-  'Dry ingredient store', 'Wash-up & staff hygiene'
-];
-const ZONES=[
-  {name:BAKERY_ROOMS[2],room:2,side:-1,z0:-6,z1:1.35,colour:0xcac4b2},
-  {name:BAKERY_ROOMS[3],room:3,side:1,z0:-6,z1:1.35,colour:0xbabbb4},
-  {name:BAKERY_ROOMS[4],room:4,side:-1,z0:-11.5,z1:-6,colour:0xd0c7b7},
-  {name:BAKERY_ROOMS[5],room:5,side:1,z0:-11.5,z1:-6,colour:0xc9d1c5},
-  {name:BAKERY_ROOMS[6],room:6,side:-1,z0:B,z1:-11.5,colour:0xc1b7a1},
-  {name:BAKERY_ROOMS[7],room:7,side:1,z0:B,z1:-11.5,colour:0xb6c6c1}
-];
+// The High Street bakery, laid out the way a real neighbourhood bakery works:
+//
+//   • Front of house (door end): a tiled customer floor, a bread wall of baskets, a display table,
+//     a few café seats by the window and a chalkboard sign.
+//   • The counter, which divides the shop from the kitchen: glass pastry case, pie warmer, cake
+//     stands, register, bagging station and bread slicer — baker serves from behind it.
+//   • Production kitchen (back), visible over the counter like an open-plan artisan bakery:
+//     deck ovens under an extraction hood, spiral mixer, proofer cabinet, stainless prep island,
+//     marble pastry bench, trolley racks of cooling loaves, flour sacks, sink and ingredient shelves.
+//
+// Shelves reflect the real simulation: loaves on the bread wall and pies in the warmer follow the
+// bakery's stock (`site.out`), and a "sold out" board appears when the shelves are bare.
+const W = 14, D = 18, FRONT = 6, BACK = -12, EDGE = 7, WALL = 0.24;
+const COUNTER_Z = -5.4;          // counter centre line; customers stand at z > -4.85
 
-export function buildBakeryInterior(site,makeLabel){
- const group=new THREE.Group();
- group.name='Bakery production and shop';
- group.add(new THREE.HemisphereLight(0xffffff,0x71645a,2.3));
- const colliders=[],interactables=[],sceneObjects=[],placedProps=[],dynamics=[],staticBatches=new Map();
- const m=new Map();
- const mat=c=>{if(!m.has(c))m.set(c,new THREE.MeshLambertMaterial({color:c}));return m.get(c)};
- const cube=(w,h,d,x,y,z,col)=>{
-   if(!staticBatches.has(col))staticBatches.set(col,[]);
-   staticBatches.get(col).push({w,h,d,x,y,z});
- };
- const solid=(w,h,d,x,y,z,col)=>{
-   cube(w,h,d,x,y,z,col);
-   colliders.push({x0:x-w/2,x1:x+w/2,z0:z-d/2,z1:z+d/2});
- };
- const shelf=(x,z,w,d,levels=3)=>{
-   solid(w,2.45,d,x,1.225,z,0x83634b);
-   for(let level=0;level<levels;level++)cube(w-.1,.08,d+.05,x,.55+level*.72,z,0xbba17c);
- };
- const counter=(x,z,w=2.8)=>{solid(w,1,.83,x,.50,z,0x735746);cube(w+.06,.11,.94,x,1.04,z,0xc8b9a4)};
- const roomLabel=(txt,x,z)=>{const s=makeLabel(txt,'room');s.position.set(x,3.05,z);s.userData.labelKind='room';group.add(s)};
- const station=(key,title,description,room,x,z,doWhat='info')=>{
-   const pos=new THREE.Vector3(x,0,z);
-   interactables.push({key:'bakery:'+key,type:'civic',label:title,room,roomName:BAKERY_ROOMS[room],pos,
-      act:{do:doWhat,title,text:description,stage:key,civicId:'bakery'}});
-   placedProps.push({type:key,room});sceneObjects.push({type:'bakery',label:title,room,interactive:true,pos:{x,z}});
- };
- // Floors, painted plaster, tiled wet-room surfaces and wash-down skirting.
- cube(X*2,.16,F-B,0,-.08,(F+B)/2,0xb0ac9e);
- for(const q of ZONES)cube(X-A-.12,.024,q.z1-q.z0-.08,q.side*(X+A)/2,.03,(q.z1+q.z0)/2,q.colour);
- cube(A*2-.08,.03,1.35-B,0,.04,(B+1.35)/2,0xad9f91);
- cube(X*2,.20,F-B,0,H+.1,(B+F)/2,0xece5d6);
- for(let z=B+2;z<F;z+=4)cube(X*2,.18,.33,0,H+.02,z,0x8e8375);
- const wall=(xa,xb,za,zb)=>{if(xb>xa&&zb>za)solid(xb-xa,H,zb-za,(xa+xb)/2,H/2,(za+zb)/2,0xe5ddd0)};
- wall(-X,X,B,B+TH);
- // Front shop windows either side of a 2.5m entrance.
- wall(-X,-1.25,F-TH,F);
- wall(1.25,X,F-TH,F);
- cube(2.5,.20,.28,0,3.15,F,0x816e5b);
- cube(2.6,.07,.52,0,.035,F,0xbcb9ae);
- for(const side of [-1,1]){
-    // Walls are complete colliders; daylight windows have a detailed glass
-    // pane plus sill but do not create walk-through openings.
-    solid(.18,H,F-B,side*X,H/2,(F+B)/2,0xe0d7ca);
-    for(const q of ZONES.filter(v=>v.side===side)){
-      const zm=(q.z0+q.z1)/2;
-      cube(.045,1.55,1.4,side*(X+.1),2.1,zm,0x9eb7b6);
-      cube(.09,.1,1.5,side*(X+.12),1.27,zm,0x786f65);
-    }
-    // Processing rooms have direct openings off the central corridor.
-    for(const q of ZONES.filter(v=>v.side===side)){
-      const mid=(q.z0+q.z1)/2;
-      wall(side*A-.1,side*A+.1,q.z0,mid-1.12);
-      wall(side*A-.1,side*A+.1,mid+1.12,q.z1);
-      cube(.23,.18,2.28,side*A,2.75,mid,0x8b7d6d);
-      roomLabel(q.name,side*(A+1.75),mid);
-    }
-    // Cross walls stop food prep, stock and wash-up areas merging.
-    for(const z of [-6,-11.5])wall(side<0?-X:A,side<0?-A:X,z-TH/2,z+TH/2);
- }
- // Shop has a generous accessible circulation aisle from the front door.
- cube(5.6,.055,3.2,0,.035,3.25,0x9d907c);
- // Retail frontage: glass pie case, shelves of rolls and breads, cash till.
- counter(4.55,1.65,3.65);
- cube(2.3,.80,.12,4.55,1.66,1.65,0x9ab6b4); // transparent-looking display case
- cube(2.2,.08,.7,4.55,1.15,1.65,0xd4bd92);
- for(const x of [3.6,4.4,5.2]){
-   cube(.4,.23,.4,x,1.27,1.65,0xb77b45); // pastry trays
-   cube(.35,.12,.35,x,1.53,1.65,0xe0bb79);
- }
- shelf(-7.5,3.2,.60,3.10);
- for(const z of [1.9,2.8,3.7,4.5])for(const y of [.72,1.46,2.18]){
-   cube(.52,.20,.38,-6.8,y,z,0xc59255); // bread tins and baskets
-   cube(.38,.13,.28,-6.8,y+.18,z,0xe1ae65);
- }
- cube(.70,.25,.45,5.3,1.18,1.80,0x333d42); // EFTPOS terminal
- cube(.58,.10,.36,5.4,1.37,1.80,0xbac5be);
- cube(1.65,.9,.16,4.8,2.8,5.72,0x91795d); // menu sign
- station('checkout','Shop counter · buy bread and pies',
-   'Fresh loaves and pies appear here after being baked and moved from the cooling racks. Prices and available quantities use the actual TownLife stock.',
-   0,3.2,2.22,'civic-ledger');
- station('shelves','Inspect today’s baked goods',
-   'Bread and pies are arranged on trays and kept off the floor. Unsold goods stay in the TownLife sales inventory and can run out.',
-   0,-5.45,2.9,'bakery-status');
- station('opening-hours','Read bakery opening hours',
-   'The bakery opens early. Bakers may be preparing dough before the sales counter opens. The opening times and staffing are simulated by the town clock.',
-   0,1.0,4.5,'bakery-status');
- roomLabel('Bakery shopfront',-3.0,4.9);
- // MIXING zone. Stainless preparation benches, commercial mixer, sink.
- counter(-6.45,-4.1,2.2);
- solid(1.35,1.52,1.18,-5.2,.76,-2.15,0xb5b6ac); // spiral mixer
- const bowl=new THREE.Mesh(new THREE.CylinderGeometry(.55,.41,.42,14),mat(0x909fa1));
- bowl.position.set(-5.2,1.45,-2.15);group.add(bowl);
- cube(.35,.6,.28,-5.2,1.82,-2.15,0x6e777a);
- for(const x of [-7.05,-6.36,-5.67])cube(.50,.22,.47,x,1.18,-4.1,0xc7a477);
- solid(.80,.90,.7,-3.2,.45,-5.4,0xbebfba); // hand wash basin
- cube(.6,.1,.52,-3.2,.99,-5.4,0xd3d9d4);
- station('mixer','Mix a dough batch',
-   'A commercial mixer combines flour, water, yeast and salt. The simulated batch uses two actual flour bags from the Mill and needs staff on shift.',
-   2,-3.15,-2.30,'bakery-process');
- station('prep-bench','Inspect clean dough preparation benches',
-   'Sanitised stainless work surfaces are used for dividing, weighing, rounding and shaping dough. Raw ingredients are kept separate from ready-to-eat products.',
-   2,-5.5,-4.08);
- station('wash-hands','Use dedicated hand-wash sink',
-   'This sink is for handwashing before handling food. Cleaning equipment and food ingredients should not share a hand-wash basin.',
-   2,-3.05,-5.05);
- // OVEN zone. Commercial deck ovens, guarded surfaces, insulated doors.
- for(const z of [-1.20,-3.95]){
-   solid(2.55,2.6,1.25,6.4,1.30,z,0x747b7b);
-   cube(1.86,.74,.08,6.4,1.36,z+.68,0x383f42);
-   cube(1.6,.48,.045,6.4,1.42,z+.735,0xaa7659);
-   const flame=new THREE.Mesh(new THREE.BoxGeometry(1.55,.38,.04),
-     new THREE.MeshLambertMaterial({color:0xf8ab61,emissive:0xe76f26,emissiveIntensity:.06}));
-   flame.position.set(6.4,1.42,z+.77);
-   flame.userData.anim={key:'bakery:oven-lights',type:'glow',phase:z,always:false};
-   group.add(flame);dynamics.push(flame);
- }
- cube(1.8,.09,2.1,2.4,.93,-5.35,0xaab3ae); // landing bench
- cube(.2,2.5,.16,2.5,1.3,-4.88,0x7c9a9d); // rack
- station('oven','Check oven and bake proofed dough',
-   'The deck ovens are guarded hot equipment. Baking completes only after simulated proofing and oven time, then adds real loaves to the Bakery shelves.',
-   3,4.15,-2.6,'bakery-process');
- station('oven-safety','Read oven safety rules',
-   'Hot trays and doors require safe handling. Keep the landing bench free, use protective equipment and let products cool before packing.',
-   3,3.10,-4.65);
- // PROOFING zone. Enclosed cabinet, trays and thermometers.
- solid(1.75,2.7,1.05,-6.70,1.35,-9.28,0xc0c6c1);
- cube(1.27,1.98,.06,-6.7,1.43,-8.72,0x8da5a3);
- for(const y of [.7,1.25,1.80,2.3]) {
-  cube(1.2,.08,.7,-6.70,y,-9.30,0xbcc3bb);
-  for(const x of [-6.95,-6.55,-6.15])cube(.22,.11,.22,x,y+.11,-9.3,0xc7a06b);
- }
- solid(1.65,.90,.82,-3.65,.45,-10.2,0xb2b7b4);
- station('proofer','Check the dough proofer',
-   'Dough rises in a warm, humid proofing cabinet. A supervised batch must finish its simulated proofing period before it can go into the oven.',
-   4,-4.35,-9.35,'bakery-process');
- station('food-thermometer','Read proofing and temperature chart',
-   'The baker records fermentation time, dough condition and cabinet settings. This interactive scene is educational, not a live appliance.',
-   4,-3.05,-7.25);
- // COOLING/packing zone: on racks, not piled up in work zones.
- for(const x of [5.8,7.1]) {
-   shelf(x,-9.05,.62,2.20,4);
-   for(const z of [-9.9,-9.0,-8.1])for(const y of [.75,1.5,2.17])
-     cube(.34,.16,.40,x,y,z,0xc78b48);
- }
- counter(2.95,-10.15,1.65);
- cube(.75,.12,.48,2.90,1.13,-10.14,0xc3b293);
- station('cooling','Inspect the cooling and packing racks',
-   'Loaves cool on open racks before they are bagged and labelled. Putting hot loaves straight into sealed bags traps condensation.',
-   5,3.8,-9.10,'bakery-status');
- station('delivery-orders','Read café and store delivery list',
-   'The bakery supplies bread and pies to the town. Check how much product is on the shelves and where flour is coming from.',
-   5,3.05,-7.25,'bakery-status');
- // DRY INGREDIENT STORE. Flour on pallets, sealed drums, allergen labels.
- shelf(-7.5,-14.55,.62,3.75,4);
- for(const x of [-6.65,-5.97,-5.29]){
-  for(const z of [-14.9,-13.8]){
-   cube(.62,.57,.54,x,.31,z,0xb7aa8e);
-   cube(.54,.48,.49,x,.79,z,0xd6bb8c);
+export const BAKERY_LAYOUT = Object.freeze({ counterZ: COUNTER_Z, staff: { x: 3.4, z: -6.6 }, staffUse: { x: 3.4, z: -4.2 } });
+
+export function buildBakeryInterior(site, makeLabel, roomTitle = 'Bakery') {
+  const group = new THREE.Group();
+  group.name = 'Inside ' + site.name;
+  const colliders = [], interactables = [], sceneObjects = [], placedProps = [];
+  group.add(new THREE.HemisphereLight(0xfff3dc, 0x6b5a48, 2.0));
+  const warm = new THREE.PointLight(0xffd9a0, 1.1, 14, 1.6); warm.position.set(0, 3.6, -1.5); group.add(warm);
+  const glow = new THREE.PointLight(0xff8a3d, 0.9, 7, 1.8); glow.position.set(-1.6, 1.4, -9.8); group.add(glow);
+
+  // ── helpers ──
+  const mats = new Map(), geos = new Map();
+  const mat = (c, o = {}) => {
+    const k = c + '|' + (o.e ?? '') + '|' + (o.a ?? 1) + '|' + (o.side ?? 0);
+    if (!mats.has(k)) mats.set(k, new THREE.MeshLambertMaterial({ color: c, emissive: o.e ?? 0x000000, emissiveIntensity: o.e ? 0.55 : 0, transparent: (o.a ?? 1) < 1, opacity: o.a ?? 1, side: o.side ?? THREE.FrontSide }));
+    return mats.get(k);
+  };
+  const geo = (k, make) => { if (!geos.has(k)) geos.set(k, make()); return geos.get(k); };
+  const put = (g, c, x, y, z, o = {}) => {
+    const m = new THREE.Mesh(g, mat(c, o));
+    m.position.set(x, y, z);
+    if (o.ry) m.rotation.y = o.ry; if (o.rx) m.rotation.x = o.rx; if (o.rz) m.rotation.z = o.rz;
+    if (o.s) m.scale.set(...o.s);
+    group.add(m); return m;
+  };
+  const box = (w, h, d, x, y, z, c, o) => put(geo(`b${w},${h},${d}`, () => new THREE.BoxGeometry(w, h, d)), c, x, y, z, o);
+  const cyl = (rt, rb, h, x, y, z, c, o, seg = 12, open = false) => put(geo(`c${rt},${rb},${h},${seg},${open}`, () => new THREE.CylinderGeometry(rt, rb, h, seg, 1, open)), c, x, y, z, { side: open ? THREE.DoubleSide : undefined, ...o });
+  const ball = (r, x, y, z, c, o) => put(geo(`s${r}`, () => new THREE.SphereGeometry(r, 10, 7)), c, x, y, z, o);
+  const solid = (w, h, d, x, y, z, c, o) => { box(w, h, d, x, y, z, c, o); colliders.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 }); };
+  const blocker = (w, d, x, z) => colliders.push({ x0: x - w / 2, x1: x + w / 2, z0: z - d / 2, z1: z + d / 2 });
+  const text = (label, x, y, z, kind = 'interactive') => {
+    const s = makeLabel(label, kind); s.position.set(x, y, z); s.userData.labelKind = kind; s.renderOrder = 12; group.add(s);
+  };
+
+  // ── colours ──
+  const PLASTER = 0xefe2c6, TILE = 0xf5f2ea, WOOD = 0x8a6340, DARKWOOD = 0x5c4029, STEEL = 0xbfc4c9, STEEL2 = 0x9aa0a6,
+    CRUST = 0xc98b3f, DARKCRUST = 0x8d5424, GOLD = 0xe2b25d, CREAM = 0xf3e6c6, ACCENT = 0xdca765, TERRA = 0xa4684a,
+    GLASS = 0xcfe8ee, WICKER = 0xb98c52, RED = 0x9b3b32, GREEN = 0x5f8a4e;
+
+  // ── shell: same footprint, door gap and spawn as every High Street room ──
+  box(W, 0.24, D, 0, -0.12, -3, 0xb9a88f);
+  box(W, 0.27, D, 0, 4.7, -3, 0xf0e8d6);
+  solid(W, 4.6, WALL, 0, 2.3, BACK, PLASTER);
+  solid(WALL, 4.6, D, -EDGE, 2.3, -3, PLASTER);
+  solid(WALL, 4.6, D, EDGE, 2.3, -3, PLASTER);
+  solid(6, 4.6, WALL, -4, 2.3, FRONT, PLASTER);
+  solid(6, 4.6, WALL, 4, 2.3, FRONT, PLASTER);
+  box(2.4, 0.2, WALL, 0, 3.1, FRONT, 0x6f5343);
+  box(2.15, 0.06, 0.6, 0, 0.02, FRONT, 0xb9b8ae);
+  // White tiled dado along the side and back walls, with a wooden rail on top.
+  for (const sx of [-EDGE + 0.15, EDGE - 0.15]) { box(0.06, 1.25, D - 0.4, sx, 0.62, -3, TILE); box(0.1, 0.07, D - 0.4, sx, 1.27, -3, WOOD); }
+  box(W - 0.5, 1.25, 0.06, 0, 0.62, BACK + 0.15, TILE); box(W - 0.5, 0.07, 0.1, 0, 1.27, BACK + 0.15, WOOD);
+  box(W - 0.5, 0.16, 0.5, 0, 3.65, BACK + 0.5, ACCENT);
+  // Front-wall inner dado either side of the door.
+  for (const sx of [-4, 4]) { box(5.7, 1.25, 0.06, sx, 0.62, FRONT - 0.15, TILE); box(5.7, 0.07, 0.1, sx, 1.27, FRONT - 0.15, WOOD); }
+
+  // ── floors: black-and-cream chequerboard for customers, quarry tile in the kitchen ──
+  box(W - 0.5, 0.02, 10.9, 0, 0.005, 0.65, CREAM);
+  const tiles = [];
+  for (let ix = 0; ix < 14; ix++) for (let iz = 0; iz < 11; iz++) if ((ix + iz) % 2 === 0) tiles.push([-6.5 + ix, -4.5 + iz]);
+  const checker = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), mat(0x3a3632), tiles.length);
+  const m4 = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  tiles.forEach(([x, z], i) => { m4.compose(new THREE.Vector3(x, FLOOR_SURFACE_Y.tilePattern, z), q, new THREE.Vector3(1, 1, 1)); checker.setMatrixAt(i, m4); });
+  group.add(checker);
+  box(W - 0.5, 0.02, 6.4, 0, 0.005, -8.95, TERRA);
+  box(2.2, 0.03, 1.2, 0, 0.03, 5.0, RED);                                   // door mat
+
+  // ── lighting fixtures: pendants over the counter, strip lights over the kitchen ──
+  for (const x of [-5.2, -1.7, 1.7, 5.2]) {
+    cyl(0.015, 0.015, 1.1, x, 4.05, -3.9, 0x333333);
+    cyl(0.12, 0.34, 0.3, x, 3.38, -3.9, 0xd8cdb8, {}, 14, true);
+    cyl(0.1, 0.1, 0.05, x, 3.27, -3.9, 0xfff0c8, { e: 0xffd98a });
   }
- }
- solid(1.26,1.03,.78,-3.50,.52,-16,0xadb7b5); // weighing station
- cube(.86,.07,.55,-3.50,1.09,-16.0,0x718789);
- station('flour-store','Count flour from the town Mill',
-   'The Mill delivers flour for baking. Bags are stored off the floor in the dry store. Inspect the Bakery’s actual ingredient inventory.',
-   6,-5.05,-13.1,'bakery-status');
- station('allergens','Inspect ingredient and allergen labels',
-   'Wheat flour contains gluten. Eggs, milk and other ingredients need clear storage identification. Accurate allergen information matters in real bakeries.',
-   6,-3.2,-15.75);
- // WASH/STAFF zone: cleaning sink, lockers, apron hooks and bins.
- solid(1.75,1.02,.96,6.42,.51,-15.65,0xb0babe);
- cube(1.38,.14,.69,6.42,1.08,-15.65,0xdde1dc);
- for(const x of [3.06,3.95,4.83]) {
-   solid(.7,2.1,.5,x,1.05,-16.55,0x8ba5a1); // lockers
-   cube(.42,.08,.05,x,1.65,-16.24,0x4b5a58);
- }
- cube(.82,.52,.80,6.25,.26,-12.2,0x555b52); // lined refuse bin
- station('cleaning','Check the dishwash and sanitation station',
-   'Utensils and trays are washed away from dough preparation. The cleaning station uses separate equipment and good drainage.',
-   7,5.30,-15.0);
- station('staff-room','Check staff lockers and PPE',
-   'Clean aprons, hair coverings and work shoes are stored separately from ingredients and baked products. Keep fire exits clear.',
-   7,3.25,-14.0);
- // Work-zone pendant lights. Static ceiling fixtures avoid excessive draw calls.
- for(const q of ZONES){
-  cube(1.08,.12,.56,q.side*4.6,3.86,(q.z0+q.z1)/2,0xffecd2);
- }
- for(const z of [4,0,-4,-8,-12,-16])cube(.72,.13,.42,0,3.86,z,0xffecd2);
- const unit=new THREE.BoxGeometry(1,1,1),matrix=new THREE.Matrix4();
- for(const [c,els] of staticBatches){
-  const g=new THREE.InstancedMesh(unit,mat(c),els.length);
-  els.forEach((e,i)=>{matrix.makeScale(e.w,e.h,e.d);matrix.setPosition(e.x,e.y,e.z);g.setMatrixAt(i,matrix)});
-  g.instanceMatrix.needsUpdate=true;group.add(g);
- }
- group.userData.staticBatches=staticBatches.size;
- const rooms=[
-  {name:BAKERY_ROOMS[0],x0:-X,x1:X,z0:1.35,z1:F},
-  {name:BAKERY_ROOMS[1],x0:-A,x1:A,z0:B,z1:1.35},
-  ...ZONES.map(q=>({name:q.name,x0:q.side<0?-X:A,x1:q.side<0?-A:X,z0:q.z0,z1:q.z1}))
- ];
- return {group,colliders,interactables,sceneObjects,placedProps,rooms,
-   doors:[],dynamics,sight:[],
-   bounds:{x0:-X,x1:X,z0:B,z1:F},
-   spawn:new THREE.Vector3(0,0,F-2.3),
-   exitZone:{x0:-1.10,x1:1.10,z0:F-.12,z1:F+1.2}};
+  for (const x of [-4.4, 0, 4.4]) box(1.6, 0.08, 0.3, x, 4.52, -9.2, 0xfff6e0, { e: 0xfff0c0 });
+  for (const x of [-4.5, 0, 4.5]) box(1.4, 0.1, 0.5, x, 4.5, 1.2, 0xffe6ad, { e: 0xffce7a });
+
+  // ── food builders ──
+  const boule = (x, y, z, c = CRUST) => { ball(0.15, x, y + 0.08, z, c, { s: [1, 0.62, 1] }); box(0.02, 0.01, 0.2, x, y + 0.17, z, 0xf1dcae, { ry: 0.7 }); };
+  const tinLoaf = (x, y, z, c = CRUST, ry = 0) => { box(0.3, 0.12, 0.14, x, y + 0.06, z, c, { ry }); box(0.3, 0.06, 0.12, x, y + 0.15, z, DARKCRUST, { ry }); };
+  const baguette = (x, y, z, ry = 0, rot = Math.PI / 2) => cyl(0.04, 0.04, 0.6, x, y, z, 0xd29a4f, { rz: rot, ry }, 8);
+  const roll = (x, y, z, c = CRUST) => ball(0.07, x, y + 0.04, z, c, { s: [1, 0.7, 1] });
+  const pie = (x, y, z) => { cyl(0.1, 0.085, 0.06, x, y + 0.03, z, GOLD, {}, 12); cyl(0.07, 0.07, 0.02, x, y + 0.07, z, 0xb8742f, {}, 10); };
+  const cream = (x, y, z, c = 0xf6e7b8) => { box(0.16, 0.05, 0.1, x, y + 0.025, z, 0xe9c680); box(0.15, 0.03, 0.09, x, y + 0.065, z, c); };
+  const lamington = (x, y, z) => box(0.09, 0.08, 0.09, x, y + 0.04, z, 0x4f3322);
+  const doughnut = (x, y, z, c = 0xf4d9a8) => put(geo('dn', () => new THREE.TorusGeometry(0.06, 0.03, 6, 12)), c, x, y + 0.035, z, { rx: Math.PI / 2 });
+  const croissant = (x, y, z, ry = 0) => put(geo('cr', () => new THREE.TorusGeometry(0.06, 0.032, 6, 10, 4.2)), 0xd9a24f, x, y + 0.04, z, { rx: Math.PI / 2, rz: ry });
+  const tray = (w, d, x, y, z) => box(w, 0.02, d, x, y + 0.01, z, STEEL2);
+  const basket = (x, y, z, r = 0.3, h = 0.2) => { cyl(r, r * 0.85, h, x, y + h / 2, z, WICKER, {}, 12, true); cyl(r * 0.85, r * 0.85, 0.02, x, y + 0.01, z, DARKWOOD, {}, 12); };
+
+  // ── stock levels from the live simulation ──
+  const out = site.out || {};
+  const breadN = out.bread ?? 24, pieN = out.pie ?? 6;
+  const BREAD_SLOTS = 20, bread = Math.max(0, Math.min(1, breadN / 24));
+  const filled = Math.round(bread * BREAD_SLOTS);
+
+  // ── BREAD WALL: four shelves of baskets along the right wall ──
+  const BZ0 = 0.4, BZ1 = 4.4, BX = 6.55;
+  blocker(0.8, BZ1 - BZ0 + 0.3, BX, (BZ0 + BZ1) / 2);
+  const bzc = (BZ0 + BZ1) / 2, blen = BZ1 - BZ0 + 0.3;
+  box(0.05, 2.1, blen, EDGE - 0.2, 1.05, bzc, DARKWOOD);                                  // back panel
+  for (const ez of [BZ0 - 0.15, BZ1 + 0.15, bzc]) box(0.7, 2.1, 0.07, BX, 1.05, ez, DARKWOOD); // uprights
+  const levels = [0.38, 0.9, 1.42, 1.94];
+  let slot = 0;
+  levels.forEach((ly, li) => {
+    box(0.74, 0.06, BZ1 - BZ0 + 0.3, BX - 0.0, ly, (BZ0 + BZ1) / 2, WOOD);
+    for (let i = 0; i < 5; i++, slot++) {
+      const z = BZ0 + 0.4 + i * 0.8, x = BX - 0.12, have = slot < filled;
+      basket(x, ly + 0.03, z, 0.27, 0.16);
+      if (!have) continue;
+      if (li === 0) { boule(x, ly + 0.1, z - 0.08); boule(x, ly + 0.1, z + 0.12, 0xb87636); }
+      else if (li === 1) { tinLoaf(x, ly + 0.08, z - 0.08, 0xc99552, Math.PI / 2); tinLoaf(x, ly + 0.08, z + 0.1, 0xa06a32, Math.PI / 2); }
+      else if (li === 2) { for (const dz of [-0.14, 0, 0.14]) baguette(x, ly + 0.25, z + dz, 0.05 * dz, Math.PI / 2 - 0.12); }
+      else { for (const [dx, dz] of [[-0.06, -0.08], [0.06, -0.06], [0, 0.07], [-0.07, 0.1]]) roll(x + dx, ly + 0.1, z + dz, i % 2 ? CRUST : 0xd8a35a); }
+    }
+  });
+  box(0.04, 0.5, BZ1 - BZ0 + 0.2, BX - 0.34, 2.45, (BZ0 + BZ1) / 2, 0x2f3d34);
+  text(breadN > 0 ? 'Fresh bread today' : 'Sold out — more soon', BX - 0.9, 2.55, (BZ0 + BZ1) / 2);
+  text(`${Math.round(breadN)} loaves on the shelves`, BX - 0.9, 2.25, (BZ0 + BZ1) / 2);
+  placedProps.push({ type: 'shelves', room: 0 });
+
+  // ── DISPLAY TABLE with baskets and a cake stand (customers walk around it) ──
+  solid(0.95, 0.85, 2.0, 3.9, 0.425, 2.4, WOOD);
+  box(1.05, 0.05, 2.1, 3.9, 0.87, 2.4, 0xe7d9bd);
+  basket(3.9, 0.9, 1.8, 0.28, 0.14); for (const dz of [-0.05, 0.1]) cream(3.9, 1.0, 1.8 + dz * 2, 0xf6e7b8);
+  basket(3.9, 0.9, 2.5, 0.28, 0.14); for (const [dx, dz] of [[-0.08, 0], [0.08, 0.06], [0, -0.1]]) roll(3.9 + dx, 1.0, 2.5 + dz, 0xd8a35a);
+  cyl(0.18, 0.18, 0.02, 3.9, 0.95, 3.1, 0xf3f0e8, {}, 14); cyl(0.04, 0.04, 0.12, 3.9, 0.9, 3.1, 0xf3f0e8, {}, 8);
+  for (let a = 0; a < 6; a++) croissant(3.9 + Math.cos(a) * 0.1, 0.98, 3.1 + Math.sin(a) * 0.1, a);
+  text('Fresh from the oven', 3.9, 1.5, 2.4);
+
+  // ── A-frame chalkboard by the door ──
+  solid(0.8, 1.0, 0.4, 2.35, 0.5, 4.9, 0x2f3d34);
+  box(0.76, 0.9, 0.04, 2.35, 0.55, 4.72, 0x2f3d34, { rx: -0.12 });
+  text('Today: bread · pies · buns', 2.35, 1.25, 4.9);
+
+  // ── SEATING by the front window: wall bench, two round tables, chairs ──
+  solid(0.7, 0.5, 3.3, -6.55, 0.25, 2.0, DARKWOOD);
+  box(0.12, 0.55, 3.3, -6.84, 0.78, 2.0, 0x7a4a3a);
+  box(0.62, 0.1, 3.2, -6.55, 0.55, 2.0, 0xb5624e);
+  for (const tz of [3.3, 0.4]) {
+    solid(0.9, 0.74, 0.9, -4.5, 0.37, tz, 0xe6d2ad);
+    cyl(0.5, 0.5, 0.05, -4.5, 0.77, tz, 0xe8dcc0, {}, 18); cyl(0.07, 0.1, 0.72, -4.5, 0.38, tz, 0x333333, {}, 8);
+    cyl(0.07, 0.07, 0.14, -4.5, 0.86, tz, 0xf0f0ea, {}, 10); cyl(0.04, 0.04, 0.08, -4.5, 0.92, tz + 0.12, GREEN, {}, 6);   // cup and bud vase
+    for (const [cx, cz] of [[-3.7, tz], [-4.5, tz + (tz > 1 ? 0.8 : -0.8)]]) {
+      solid(0.46, 0.46, 0.46, cx, 0.23, cz, DARKWOOD);
+      box(0.42, 0.05, 0.42, cx, 0.46, cz, 0xcaa56a); box(0.42, 0.45, 0.05, cx + (cx > -4 ? 0.2 : 0), 0.72, cz + (cx > -4 ? 0 : (tz > 1 ? 0.2 : -0.2)), DARKWOOD, { ry: cx > -4 ? Math.PI / 2 : 0 });
+    }
+  }
+  text('Café corner', -4.5, 1.7, 1.85);
+  // Pot plants in the front corners and a shelf of cookbooks above the bench.
+  for (const px of [-6.45, 6.45]) { solid(0.5, 0.5, 0.5, px, 0.25, 5.3, 0x9b5a3c); ball(0.4, px, 0.95, 5.3, GREEN, { s: [1, 1.2, 1] }); }
+  box(0.2, 0.05, 2.4, -6.85, 2.15, 2.0, WOOD); for (let i = 0; i < 7; i++) box(0.14, 0.26, 0.08, -6.82, 2.3, 1.0 + i * 0.3, [RED, 0x3f6a8a, GOLD, GREEN][i % 4]);
+
+  // ── THE COUNTER ──
+  // Left half is a low tiled base under a glass pastry case; right half is the full-height working
+  // counter with a marble top. The kitchen stays visible through and over the glass.
+  blocker(W - 0.24, 1.1, 0, COUNTER_Z);
+  const CASE_X0 = -6.76, CASE_X1 = -0.9, caseW = CASE_X1 - CASE_X0, caseCx = (CASE_X0 + CASE_X1) / 2;
+  box(caseW, 0.62, 1.1, caseCx, 0.31, COUNTER_Z, WOOD);
+  box(caseW, 0.5, 0.06, caseCx, 0.32, COUNTER_Z + 0.58, TILE);
+  const RX0 = CASE_X1, RW = EDGE - 0.12 - RX0, RCX = (RX0 + EDGE - 0.12) / 2;
+  box(RW, 1.2, 1.1, RCX, 0.6, COUNTER_Z, WOOD);
+  box(RW, 0.5, 0.06, RCX, 0.32, COUNTER_Z + 0.58, TILE);
+  box(RW + 0.1, 0.06, 1.3, RCX, 1.22, COUNTER_Z, 0xe9e5dc);                  // marble top
+  // glass case: front pane, top pane, steel frame rails, an upper shelf, two rows of trays on each level
+  box(caseW, 0.72, 0.03, caseCx, 0.98, COUNTER_Z + 0.5, GLASS, { a: 0.22 });
+  box(caseW, 0.03, 1.06, caseCx, 1.35, COUNTER_Z, GLASS, { a: 0.22 });
+  box(caseW, 0.04, 0.05, caseCx, 1.35, COUNTER_Z + 0.5, STEEL); box(caseW, 0.04, 0.05, caseCx, 0.63, COUNTER_Z + 0.5, STEEL);
+  for (const sx of [CASE_X0, CASE_X1]) box(0.05, 0.72, 1.06, sx, 0.98, COUNTER_Z, GLASS, { a: 0.25 });
+  box(caseW, 0.025, 0.95, caseCx, 1.0, COUNTER_Z - 0.02, GLASS, { a: 0.4 });
+  const goods = [
+    (x, y, z, i) => cream(x, y, z, i % 2 ? 0xf6e7b8 : 0xf0c8d0), (x, y, z) => lamington(x, y, z), (x, y, z, i) => doughnut(x, y, z, i % 2 ? 0xf4d9a8 : 0xe8a6b6),
+    (x, y, z) => croissant(x, y, z, 0.3), (x, y, z) => pie(x, y, z), (x, y, z) => cream(x, y, z, 0xffffff),
+  ];
+  const caseSlots = Math.floor(caseW / 0.42);
+  for (const [lvl, base] of [[0, 0.62], [1, 1.0]]) for (let i = 0; i < caseSlots; i++) {
+    const x = CASE_X0 + 0.3 + i * 0.42;
+    for (const [dz, row] of [[0.2, 0], [-0.2, 1]]) { tray(0.38, 0.34, x, base + 0.0, COUNTER_Z + dz); goods[(i + row * 2 + lvl * 3) % goods.length](x, base + 0.02, COUNTER_Z + dz, i); }
+  }
+  // cake stands with domes on top of the case
+  for (const [x, c] of [[-5.6, 0xf4b6c2], [-3.4, 0xf3ead2]]) {
+    cyl(0.04, 0.04, 0.16, x, 1.45, COUNTER_Z + 0.1, 0xf3f0e8, {}, 8); cyl(0.2, 0.2, 0.02, x, 1.54, COUNTER_Z + 0.1, 0xf3f0e8, {}, 16);
+    cyl(0.15, 0.15, 0.12, x, 1.61, COUNTER_Z + 0.1, c, {}, 14);
+    ball(0.21, x, 1.64, COUNTER_Z + 0.1, GLASS, { a: 0.3, s: [1, 0.8, 1] });
+  }
+  // tip jar and hand bell on the working counter
+  cyl(0.08, 0.08, 0.16, 2.0, 1.33, COUNTER_Z + 0.35, GLASS, { a: 0.4 }, 10);
+  cyl(0.06, 0.07, 0.04, 2.4, 1.27, COUNTER_Z + 0.35, 0xc9a24a, {}, 10);
+  // pie warmer: heated glass cabinet at the near end of the working counter
+  box(1.2, 0.7, 0.6, 0.45, 1.6, COUNTER_Z - 0.1, STEEL2); box(1.12, 0.5, 0.04, 0.45, 1.6, COUNTER_Z + 0.22, GLASS, { a: 0.3 });
+  box(1.1, 0.04, 0.5, 0.45, 1.5, COUNTER_Z - 0.1, 0xffb066, { e: 0xff9a4a });
+  for (let i = 0; i < Math.min(6, Math.ceil(pieN / 2)); i++) pie(0.05 + (i % 3) * 0.4, 1.52, COUNTER_Z - 0.1 + (i < 3 ? 0.1 : -0.15));
+  text(pieN > 0 ? `Hot pies · ${Math.round(pieN)} ready` : 'Pies out soon', 0.45, 2.25, COUNTER_Z + 0.1);
+  // register, card reader, bag stack and bread slicer (right half)
+  box(0.5, 0.16, 0.4, 3.4, 1.33, COUNTER_Z + 0.05, 0x2e2e33); box(0.4, 0.3, 0.05, 3.4, 1.52, COUNTER_Z - 0.1, 0x2e2e33, { rx: -0.3 }); box(0.3, 0.2, 0.04, 3.4, 1.54, COUNTER_Z - 0.09, 0x6fc2a0, { e: 0x3f9e7c, rx: -0.3 });
+  box(0.16, 0.04, 0.22, 4.0, 1.27, COUNTER_Z + 0.25, 0x222222, { rz: 0.15 });
+  for (let i = 0; i < 6; i++) box(0.34, 0.012, 0.22, 4.7, 1.26 + i * 0.012, COUNTER_Z + 0.2, 0xd8bf94);
+  box(0.9, 0.5, 0.55, 5.9, 1.52, COUNTER_Z + 0.05, STEEL); box(0.7, 0.04, 0.4, 5.9, 1.79, COUNTER_Z + 0.05, 0x333333); box(0.04, 0.3, 0.45, 5.7, 1.62, COUNTER_Z + 0.05, 0x333333);
+  tinLoaf(5.9, 1.25, COUNTER_Z + 0.3, 0xc99552);
+  // hinged counter flap (staff gate) and brass hinge
+  box(0.8, 0.08, 1.2, -0.5, 1.26, COUNTER_Z, 0x9a7650); cyl(0.025, 0.025, 0.1, -0.92, 1.26, COUNTER_Z, 0xc9a24a, { rz: Math.PI / 2 }, 6);
+  // header beam with the shop sign and two chalkboard menus
+  box(W - 0.4, 0.9, 0.28, 0, 4.1, -6.2, DARKWOOD);
+  for (const x of [-4.2, 4.2]) { box(2.4, 0.7, 0.05, x, 4.1, -6.04, 0x2f3d34); box(2.5, 0.8, 0.04, x, 4.1, -6.06, WOOD); }
+  text(site.name, 0, 4.1, -6.0, 'room');
+  text('Bread · Rolls · Sourdough', -4.2, 4.2, -5.98); text('Pies · Pastries · Cakes', 4.2, 4.2, -5.98);
+  text('Open 4:30 am', -4.2, 3.9, -5.98); text('Baked fresh daily', 4.2, 3.9, -5.98);
+  text('Bread counter', 0.6, 1.95, COUNTER_Z + 0.55);
+  placedProps.push({ type: 'counter', room: 0 });
+
+  // ── KITCHEN (visible over the counter) ──
+  const kz = BACK + 1.0;
+  // deck ovens: two stacks of three decks under an extraction hood
+  for (const ox of [-3.2, 0.1]) {
+    box(2.6, 1.9, 1.5, ox, 0.95, kz, STEEL);
+    for (let d = 0; d < 3; d++) {
+      box(2.2, 0.42, 0.04, ox, 0.45 + d * 0.55, kz + 0.77, 0x241913);
+      box(1.8, 0.28, 0.02, ox, 0.45 + d * 0.55, kz + 0.795, 0xff9a4a, { e: 0xff7a22 });
+      cyl(0.02, 0.02, 1.9, ox, 0.62 + d * 0.55, kz + 0.84, 0x555555, { rz: Math.PI / 2 }, 6);
+    }
+    box(2.7, 0.55, 1.7, ox, 3.1, kz, STEEL2); box(0.5, 1.4, 0.5, ox, 3.9, kz - 0.2, STEEL2);
+  }
+  // spiral mixer
+  box(0.9, 0.9, 1.2, 3.5, 0.45, kz - 0.1, 0x8f2f2a); cyl(0.42, 0.34, 0.5, 3.5, 1.15, kz + 0.2, STEEL, {}, 16); cyl(0.04, 0.04, 0.6, 3.5, 1.4, kz + 0.2, STEEL2, {}, 6); box(0.7, 0.35, 0.5, 3.5, 1.65, kz - 0.35, 0x8f2f2a);
+  ball(0.3, 3.5, 1.4, kz + 0.2, 0xf1e6cc, { s: [1, 0.5, 1] });
+  // proofer cabinet with trays of dough
+  box(1.0, 2.0, 0.9, 5.7, 1.0, kz, 0xdfe3e6); box(0.8, 1.7, 0.04, 5.7, 1.0, kz + 0.47, GLASS, { a: 0.35 });
+  for (let i = 0; i < 5; i++) { box(0.7, 0.02, 0.7, 5.7, 0.35 + i * 0.33, kz, STEEL2); for (const dx of [-0.2, 0, 0.2]) ball(0.08, 5.7 + dx, 0.42 + i * 0.33, kz + 0.1, 0xf1e6cc, { s: [1, 0.7, 1] }); }
+  // stainless prep island with dough, scales, rolling pin and banneton baskets
+  box(3.6, 0.9, 1.0, 0.2, 0.45, -8.2, STEEL2); box(3.6, 0.06, 1.1, 0.2, 0.93, -8.2, STEEL); box(3.4, 0.05, 0.9, 0.2, 0.3, -8.2, STEEL2);
+  box(1.0, 0.012, 0.7, -0.8, 0.965, -8.2, 0xf6f3ec);                                   // dusted flour
+  for (const [x, z] of [[-1.0, -8.3], [-0.6, -8.0], [-0.4, -8.4]]) ball(0.13, x, 1.03, z, 0xf1e6cc, { s: [1, 0.6, 1] });
+  cyl(0.03, 0.03, 0.6, 0.0, 1.0, -8.0, 0xd9b982, { rz: Math.PI / 2 }, 8);
+  for (const x of [1.0, 1.5]) cyl(0.18, 0.14, 0.14, x, 1.05, -8.3, 0xb98c52, {}, 12);
+  box(0.28, 0.1, 0.22, 1.9, 1.0, -8.1, 0x333333); box(0.2, 0.01, 0.16, 1.9, 1.06, -8.1, 0x9ee0c0, { e: 0x4fb88a });
+  // marble pastry bench along the left wall, trolley racks of cooling loaves
+  box(0.9, 0.9, 2.2, -6.4, 0.45, -7.6, WOOD); box(0.95, 0.06, 2.3, -6.4, 0.93, -7.6, 0xe9e5dc);
+  for (let i = 0; i < 4; i++) { ball(0.1, -6.4, 1.0, -8.2 + i * 0.4, 0xf3d9a4, { s: [1, 0.6, 1] }); }
+  for (const rz of [-9.2, -10.6]) {
+    for (const [dx, dz] of [[-0.4, -0.3], [0.4, -0.3], [-0.4, 0.3], [0.4, 0.3]]) cyl(0.02, 0.02, 1.8, -6.1 + dx * 0.6, 0.9, rz + dz * 0.6, 0x666666, {}, 6);
+    for (let i = 0; i < 5; i++) { tray(0.55, 0.45, -6.1, 0.2 + i * 0.36, rz); tinLoaf(-6.1, 0.22 + i * 0.36, rz, i % 2 ? CRUST : 0xb87636, Math.PI / 2); }
+  }
+  // flour sacks (from the Mill), sink and ingredient shelving
+  for (const [x, y, z] of [[6.2, 0.1, -7.3], [6.2, 0.1, -7.95], [6.2, 0.3, -7.6], [5.6, 0.1, -7.6]]) { box(0.55, 0.2, 0.75, x, y + 0.1, z, 0xeee3c8, { ry: 0.1 }); box(0.3, 0.08, 0.02, x, y + 0.12, z + 0.38, 0x8d5424); }
+  text('Flour · from the Mill', 6.0, 1.0, -7.6);
+  box(0.9, 0.9, 1.1, 6.3, 0.45, -9.4, STEEL2); box(0.7, 0.1, 0.8, 6.3, 0.9, -9.4, 0x707479); cyl(0.025, 0.025, 0.35, 6.55, 1.15, -9.4, STEEL, {}, 6);
+  for (const y of [1.6, 2.1, 2.6]) { box(0.35, 0.05, 3.0, 6.7, y, -9.0, WOOD); for (let i = 0; i < 5; i++) cyl(0.12, 0.12, 0.28, 6.7, y + 0.16, -10.2 + i * 0.6, i % 2 ? 0xe9e4d8 : 0xc9a24a, {}, 10); }
+  // clock and wall rail of utensils
+  cyl(0.28, 0.28, 0.05, 3.2, 3.4, BACK + 0.2, 0xf3f0e8, { rx: Math.PI / 2 }, 20); box(0.02, 0.2, 0.02, 3.2, 3.48, BACK + 0.24, 0x222222); box(0.14, 0.02, 0.02, 3.26, 3.4, BACK + 0.24, 0x222222);
+  cyl(0.015, 0.015, 3.0, 0, 2.6, BACK + 0.2, 0x666666, { rz: Math.PI / 2 }, 6);
+  for (let i = 0; i < 7; i++) box(0.05, 0.4, 0.02, -1.3 + i * 0.45, 2.38, BACK + 0.2, i % 2 ? 0xc9c9c9 : 0x8a6340);
+
+  // ── interactions and the scene description used by NPC awareness ──
+  const add = (key, label, doWhat, body, x, z) => {
+    const pos = new THREE.Vector3(x, 0, z);
+    interactables.push({ key: site.id + ':' + key, type: 'civic', label, room: 0, roomName: roomTitle, pos, act: { do: doWhat, title: label, text: body, civicId: site.id } });
+    sceneObjects.push({ type: 'civic', label, room: 0, pos: { x, z }, interactive: true });
+  };
+  add('counter', 'Bread counter', 'civic-ledger', 'Buy fresh bread and pies, or open the Town Ledger.', 0.6, -4.2);
+  add('pastries', 'Pastry case', 'info', 'The glass case holds cream buns, lamingtons, doughnuts, croissants and meat pies. The pie warmer keeps the day\'s pies hot. Pies are made each day from flour, lamb and vegetables.', -4.6, -4.2);
+  add('kitchen', 'Bakery kitchen', 'bakery-kitchen', 'Through the counter you can see the deck ovens, spiral mixer, proofer and the cooling racks. Bakers start at half past four: dough is mixed and shaped, proved warm and humid, then baked on the oven decks.', -2.2, -4.2);
+  add('breadwall', 'Bread wall', 'info', `Sourdough boules, tin loaves, baguettes and rolls sit in baskets on the bread wall. ${Math.round(breadN)} loaves are out right now. Flour arrives from the Mill, so no flour means no bread.`, 5.4, 2.4);
+  add('cafe', 'Café corner', 'info', 'Two small tables and a bench by the window, for a pie and a cuppa while the bread cools.', -3.0, 1.9);
+  placedProps.push({ type: 'noticeboard', room: 0 });
+
+  const rooms = [{ name: roomTitle, x0: -EDGE, x1: EDGE, z0: BACK, z1: FRONT, w: W, d: D, parent: -1 }];
+  return {
+    group, colliders, interactables, sceneObjects, placedProps, rooms,
+    doors: [], dynamics: [], sight: [],
+    staff: { pos: BAKERY_LAYOUT.staff, use: BAKERY_LAYOUT.staffUse },
+    bounds: { x0: -EDGE, x1: EDGE, z0: BACK, z1: FRONT },
+    spawn: new THREE.Vector3(0, 0, FRONT - 2.25),
+    exitZone: { x0: -1.05, x1: 1.05, z0: FRONT - 0.1, z1: FRONT + 1.2 },
+  };
 }

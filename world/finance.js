@@ -1,263 +1,190 @@
-// TownFinance: finite-money public finance, households, utilities and member credit.
-// Monetary transfers post equal debit/credit entries. All rates are fictional
-// Town Dollars chosen for a 24-minute game day, not real Australian rates.
-const valid=n=>Number.isSafeInteger(n)&&n>0&&n<=100000;
-const clamp=n=>Number.isSafeInteger(n)&&n>=0&&n<=1e9?n:0;
-export const ECONOMIC_RATES=Object.freeze({
-  householdRent:8,householdPower:2,npcRent:5,
-  businessRates:2,businessUtilities:3,payrollTaxPercent:10,
-  annualLoanRatePercent:8,loanTermDays:30
+// Public and household finance on top of the town's money model (life.civic): finite Commonwealth
+// and NSW treasuries, PAYG income tax, council grants, the visitor's rent and power bills, household
+// and business arrears, business utilities, and a double-entry journal. Every transfer moves money
+// from one finite balance to another; the only money that appears is the opening endowment of each
+// treasury, which the soak test counts in town money. Figures are fictional Town Dollars for a
+// 24-minute game day, not real Australian rates.
+export const RATES = Object.freeze({
+  paygPercent: 15,        // simplified whole-dollar PAYG withholding on wages
+  visitorRent: 8,         // per town day, from day 2
+  visitorPower: 2,
+  businessUtilities: 3,   // per private business per town day
+  npcRent: 8,             // every villager household pays rent and power too, to the council
+  npcPower: 2,
+  councilReserve: 6000,   // grants top the council up towards this level; a rich council needs none
+  federalGrant: 600,      // most the Commonwealth pays the council in a day
+  stateGrant: 300,        // most NSW pays the council in a day
+  gstTopUp: 400,          // most the Commonwealth passes to NSW in a day (the GST pool)
+  stateReserve: 15000,
+  federalStart: 40000,
+  stateStart: 25000,
+  arrearsCapWages: 6,     // unpaid wage arrears stop growing after this many shifts
+  journalMax: 120,
 });
-const FOOD=Object.freeze({bread:25,pie:35,eggs:20,milk:15,veg:23,fruit:21,lamb:30});
-export class TownFinance {
- constructor(life){
-  this.life=life;
-  this.bankCapital=5000; // pre-seeded cooperative equity; not conjured on each loan
-  this.federalTreasury=25000; // Commonwealth tax / grant budget
-  this.stateTreasury=15000; // NSW public health and education wages
-  this.playerRentArrears=0;this.playerUtilityArrears=0;
-  this.playerEnergy=75;this.playerMeals=0;
-  this.loan=null;this.lastClosedDay=0;
-  this.entries=[];this.sequence=0;
-  this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,stateSpending:0,grants:0,unpaidBills:0,interest:0};
-  this.lifetime={...this.daily};
- }
- keyBalance(key){
-  const l=this.life,m=l.money;
-  if(key==='player.checking')return m.checking;
-  if(key==='player.cash')return m.cash;
-  if(key==='player.savings')return m.savings;
-  if(key==='council')return l.treasury;
-  if(key==='federal')return this.federalTreasury;
-  if(key==='state')return this.stateTreasury;
-  if(key==='bank.capital')return this.bankCapital;
-  if(key.startsWith('business:')){
-   const p=l.place(key.slice(9));return p?p.operating:undefined;
-  }
-  if(key.startsWith('register:')){
-   const p=l.place(key.slice(9));return p?p.till:undefined;
-  }
-  if(key.startsWith('npc:')){
-   const v=l.villagers.find(v=>String(v.id)===key.slice(4));
-   return v?.wallet;
-  }
-  return undefined;
- }
- setBalance(key,value){
-  const l=this.life,m=l.money;
-  if(key==='player.checking'){m.checking=value;m.bankVault=m.checking+m.savings;return}
-  if(key==='player.cash'){m.cash=value;return}
-  if(key==='player.savings'){m.savings=value;m.bankVault=m.checking+m.savings;return}
-  if(key==='council'){l.treasury=value;return}
-  if(key==='federal'){this.federalTreasury=value;return}
-  if(key==='state'){this.stateTreasury=value;return}
-  if(key==='bank.capital'){this.bankCapital=value;return}
-  if(key.startsWith('business:')){l.place(key.slice(9)).operating=value;return}
-  if(key.startsWith('register:')){l.place(key.slice(9)).till=value;return}
-  if(key.startsWith('npc:')){l.villagers.find(v=>String(v.id)===key.slice(4)).wallet=value}
- }
- record(from,to,amount,memo){
-  this.entries.unshift({id:++this.sequence,day:this.life.day,time:this.life.minute,
-    debit:String(from).slice(0,60),credit:String(to).slice(0,60),
-    amount,memo:String(memo).slice(0,125)});
-  if(this.entries.length>220)this.entries.length=220;
- }
- transfer(from,to,amount,memo){
-  if(!valid(amount)||from===to)return {ok:false,reason:'Invalid transfer'};
-  const before=this.keyBalance(from),target=this.keyBalance(to);
-  if(!Number.isSafeInteger(before)||!Number.isSafeInteger(target)||before<amount)
-    return {ok:false,reason:'Insufficient funds or missing account'};
-  if(target+amount>1e9)return {ok:false,reason:'Account maximum exceeded'};
-  this.setBalance(from,before-amount);
-  this.setBalance(to,target+amount);
-  this.record(from,to,amount,memo);
-  return {ok:true,amount};
- }
- // A transfer may use business till or operating account but cannot overdraft.
- fromBusiness(site,to,amount,memo){
-  if(!valid(amount))return false;
-  const p=this.life.place(site);if(!p)return false;
-  const available=clamp(p.operating)+clamp(p.till);
-  if(available<amount)return false;
-  const part=Math.min(clamp(p.operating),amount);
-  if(part&&!this.transfer('business:'+site,to,part,memo).ok)return false;
-  if(amount>part&&!this.transfer('register:'+site,to,amount-part,memo).ok)return false;
-  return true;
- }
- incomeTax(gross){
-  return valid(gross)?Math.floor(gross*ECONOMIC_RATES.payrollTaxPercent/100):0;
- }
- taxPlayerWage(gross){
-  const amount=this.incomeTax(gross);
-  if(!amount)return 0;
-  if(this.transfer('player.checking','federal',amount,'Commonwealth PAYG on player wages').ok){
-   this.addRevenue('tax',amount);return amount;
-  }return 0;
- }
- taxNpcWage(worker,gross){
-  const amount=this.incomeTax(gross);
-  if(!amount)return 0;
-  if(this.transfer('npc:'+worker.id,'federal',amount,'Commonwealth PAYG '+worker.name).ok){
-   this.addRevenue('tax',amount);return amount;
-  }return 0;
- }
- addRevenue(type,amount){
-  this.daily[type]=(this.daily[type]||0)+amount;
-  this.lifetime[type]=(this.lifetime[type]||0)+amount;
- }
- chargeHousehold(){
-  const settle=(due,field,category)=>{
-    let remaining=this[field]+due;
-    let paid=0;
-    for(const account of ['player.checking','player.cash']){
-      const balance=this.keyBalance(account);
-      const amount=Math.min(remaining,balance);
-      if(amount>0&&this.transfer(account,'council',amount,'household '+category).ok){
-        remaining-=amount;paid+=amount;
-      }
-    }
-    this[field]=remaining;
-    this.addRevenue(category,paid);
-    if(remaining>0)this.daily.unpaidBills+=remaining;
-  };
-  settle(ECONOMIC_RATES.householdRent,'playerRentArrears','rent');
-  settle(ECONOMIC_RATES.householdPower,'playerUtilityArrears','utilities');
-  this.playerEnergy=Math.max(0,this.playerEnergy-17);
-  if(this.playerEnergy<30)this.life.log('Your energy is low. Eat food you have bought, or visit the shop.');
- }
 
- chargeBusiness(site){
-  const p=this.life.place(site);
-  if(!p||p.kind==='farmhouse'||['hall','school','clinic','post','depot','square'].includes(site))return;
-  for(const [type,rate]of [['rates',ECONOMIC_RATES.businessRates],['utilities',ECONOMIC_RATES.businessUtilities]]){
-   if(this.fromBusiness(site,'council',rate,p.name+' '+type+' Day '+this.life.day)){
-    this.addRevenue(type,rate);
-    p.dailyExpenses=(p.dailyExpenses||0)+rate;
-    p.lifetimeExpenses=(p.lifetimeExpenses||0)+rate;
-   }else{
-    p.unpaidBills=(p.unpaidBills||0)+rate;
-    this.daily.unpaidBills+=rate;
-   }
+const r2 = (n) => Math.round(n * 100) / 100;
+const num = (n) => (Number.isFinite(n) && n >= 0 ? r2(n) : 0);
+
+export function freshFinance() {
+  return {
+    federal: RATES.federalStart, state: RATES.stateStart,
+    rentArrears: 0, powerArrears: 0, visitorPaid: 0,
+    entries: [], seq: 0, lastClosedDay: 1,
+    daily: blank(), lifetime: blank(), biz: {},
+  };
+}
+const blank = () => ({ tax: 0, rates: 0, utilities: 0, rent: 0, grants: 0, councilWages: 0, stateWages: 0, unpaid: 0 });
+
+export function fin(life) {
+  const c = life.civic;
+  if (!c.finance || typeof c.finance !== 'object') c.finance = freshFinance();
+  const f = c.finance;
+  for (const k of ['federal', 'state', 'rentArrears', 'powerArrears', 'visitorPaid']) f[k] = num(f[k]);
+  if (!Array.isArray(f.entries)) f.entries = [];
+  if (!f.daily) f.daily = blank();
+  if (!f.lifetime) f.lifetime = blank();
+  if (!f.biz) f.biz = {};
+  return f;
+}
+
+export function record(life, from, to, amount, memo) {
+  const f = fin(life);
+  if (!(amount > 0)) return;
+  f.entries.unshift({ id: ++f.seq, day: life.day, minute: Math.floor(life.minute), debit: String(from).slice(0, 40), credit: String(to).slice(0, 40), amount: r2(amount), memo: String(memo).slice(0, 100) });
+  if (f.entries.length > RATES.journalMax) f.entries.length = RATES.journalMax;
+}
+
+function revenue(life, type, amount) {
+  const f = fin(life);
+  f.daily[type] = r2((f.daily[type] || 0) + amount);
+  f.lifetime[type] = r2((f.lifetime[type] || 0) + amount);
+}
+export const bizStats = (life, id) => { const f = fin(life); return (f.biz[id] ||= { sales: 0, wages: 0, utilities: 0, rates: 0, unpaid: 0, supplies: 0 }); };
+
+// A sale at a till (called from TownLife.sale): the shop's gross takings.
+export function noteSale(life, shop, price) { bizStats(life, shop.id).sales = r2(bizStats(life, shop.id).sales + price); }
+export function noteRates(life, place, amount) { bizStats(life, place.id).rates = r2(bizStats(life, place.id).rates + amount); revenue(life, 'rates', amount); record(life, 'business:' + place.id, 'council', amount, place.name + ' business rates'); }
+
+// Whole-dollar PAYG: withheld from a wage that has already reached the worker's wallet.
+export function withhold(life, v, gross) {
+  const amount = Math.floor(gross * RATES.paygPercent / 100);
+  if (amount <= 0 || v.wallet < amount) return 0;
+  const f = fin(life);
+  v.wallet -= amount; f.federal = r2(f.federal + amount);
+  revenue(life, 'tax', amount);
+  record(life, 'npc:' + v.name, 'commonwealth', amount, 'PAYG income tax');
+  return amount;
+}
+
+// PAYG on the visitor's wages, taken from the wallet that was just paid.
+export function withholdVisitor(life, gross) {
+  const me = life.civic.player, amount = Math.floor(gross * RATES.paygPercent / 100);
+  if (amount <= 0 || me.wallet < amount) return 0;
+  const f = fin(life);
+  me.wallet -= amount; f.federal = r2(f.federal + amount);
+  revenue(life, 'tax', amount);
+  record(life, 'visitor', 'commonwealth', amount, 'PAYG income tax on your wages');
+  return amount;
+}
+
+// Draw a payment from the NSW treasury first for school and clinic jobs, falling back to the council.
+export function stateFunded(site) { return site === 'school' || site === 'clinic'; }
+export function drawState(life, amount) {
+  const f = fin(life), take = Math.min(f.state, amount);
+  if (take > 0) { f.state = r2(f.state - take); revenue(life, 'stateWages', take); record(life, 'nsw', 'wages', take, 'NSW health and education payroll'); }
+  return take;
+}
+export function noteCouncilWage(life, amount) { if (amount > 0) { revenue(life, 'councilWages', amount); record(life, 'council', 'wages', amount, 'Council payroll'); } }
+
+// Daily grants are needs-based, as for a real country council: the Commonwealth and NSW only top the
+// council up when it is below its reserve, and the Commonwealth passes the GST pool to NSW when NSW
+// runs low. Every dollar moves from a treasury that actually holds it.
+export function dailyGrants(life) {
+  const f = fin(life), c = life.civic;
+  const gst = Math.min(RATES.gstTopUp, Math.max(0, RATES.stateReserve - f.state), f.federal);
+  if (gst > 0) { f.federal = r2(f.federal - gst); f.state = r2(f.state + gst); record(life, 'commonwealth', 'nsw', gst, 'GST distribution to NSW'); }
+  const need = Math.max(0, RATES.councilReserve - c.treasury);
+  const fed = Math.min(RATES.federalGrant, f.federal, need);
+  const st = Math.min(RATES.stateGrant, f.state, Math.max(0, need - fed));
+  f.federal = r2(f.federal - fed); f.state = r2(f.state - st);
+  c.treasury = r2(c.treasury + fed + st);
+  if (fed) record(life, 'commonwealth', 'council', fed, 'Commonwealth local services grant');
+  if (st) record(life, 'nsw', 'council', st, 'NSW local infrastructure grant');
+  revenue(life, 'grants', fed + st);
+  return fed + st;
+}
+
+// Start of each town day (day 2 onwards): the visitor's rent and power, villagers' rate arrears,
+// and every private business's utilities. Nothing overdrafts; shortfalls become arrears.
+export function dailyClose(life) {
+  const f = fin(life), c = life.civic, me = c.player;
+  if (f.lastClosedDay >= life.day) return;
+  f.lastClosedDay = life.day;
+  f.daily = blank();
+  // The visitor's household bills.
+  const bill = (due, field, label) => {
+    let owe = f[field] + due, paid = 0;
+    for (const pot of ['wallet', 'bank']) { const take = Math.min(owe, Math.floor(me[pot])); if (take > 0) { me[pot] -= take; owe -= take; paid += take; } }
+    f[field] = owe; c.treasury = r2(c.treasury + paid); f.visitorPaid += paid;
+    if (paid) { revenue(life, label === 'rent' ? 'rent' : 'utilities', paid); record(life, 'visitor', 'council', paid, 'Your ' + label); }
+    if (owe > 0) f.daily.unpaid = r2(f.daily.unpaid + owe);
+  };
+  bill(RATES.visitorRent, 'rentArrears', 'rent');
+  bill(RATES.visitorPower, 'powerArrears', 'power');
+  if (f.rentArrears + f.powerArrears > 0) life.log('Your rent and power are overdue. Pay them at the Community Bank.');
+  // Every villager household pays rent and power as well, from its wallet; shortfalls become arrears.
+  for (const v of life.villagers) {
+    const due = RATES.npcRent + RATES.npcPower + (v.housingArrears || 0), pay = Math.min(due, Math.max(0, Math.floor(v.wallet)));
+    if (pay > 0) { v.wallet -= pay; c.treasury = r2(c.treasury + pay); revenue(life, 'rent', pay); }
+    v.housingArrears = Math.min(80, r2(due - pay));
+    if (v.housingArrears > 0) f.daily.unpaid = r2(f.daily.unpaid + v.housingArrears);
   }
- }
- chargeNpcHouseholds(){
-  for(const v of this.life.villagers){
-   const due=ECONOMIC_RATES.npcRent+(v.housingArrears||0);
-   const available=clamp(v.wallet);
-   const paid=Math.min(available,due);
-   if(paid&&this.transfer('npc:'+v.id,'council',paid,'household rent '+v.name).ok){
-    this.addRevenue('rent',paid);
-   }
-   v.housingArrears=due-paid;
-   if(v.housingArrears>0)this.daily.unpaidBills+=v.housingArrears;
+  // Private businesses pay utilities from the till, then any bills they still owe.
+  for (const p of life.places.values()) {
+    if (p.kind === 'home' || p.kind === 'utility' || !p.target || ['hall', 'school', 'clinic', 'post', 'depot', 'square', 'bank'].includes(p.id)) continue;
+    const s = bizStats(life, p.id), due = RATES.businessUtilities + s.unpaid, pay = Math.min(due, Math.max(0, Math.floor(p.till)));
+    if (pay > 0) { p.till -= pay; c.treasury = r2(c.treasury + pay); s.utilities = r2(s.utilities + pay); revenue(life, 'utilities', pay); record(life, 'business:' + p.id, 'council', pay, p.name + ' utilities'); }
+    s.unpaid = r2(due - pay);
+    if (s.unpaid > 0) f.daily.unpaid = r2(f.daily.unpaid + s.unpaid);
   }
- }
- // Bank loans are *funded from existing bank equity*, not fabricated deposits.
- borrow(amount){
-  const m=this.life.money;
-  if(![100,200,400].includes(amount))return {ok:false,message:'Available loans are $100, $200 or $400.'};
-  if(!this.life.open(this.life.place('hall')))return {ok:false,message:'The Town Hall bank is closed. Return during teller hours.'};
-  if(this.loan?.principal>0)return {ok:false,message:'Repay the existing loan first.'};
-  if(this.playerRentArrears||this.playerUtilityArrears)return {ok:false,message:'Clear overdue household bills first.'};
-  if(Object.keys(m.completedJobs).length===0)return {ok:false,message:'Complete paid work before applying for credit.'};
-  if(this.bankCapital<amount)return {ok:false,message:'The bank lacks lending capital.'};
-  if(amount>200&&m.earned<50)return {ok:false,message:'A larger loan requires at least $50 of recorded earnings.'};
-  if(!this.transfer('bank.capital','player.checking',amount,'secured member loan principal').ok)
-    return {ok:false,message:'Loan could not be settled.'};
-  this.loan={principal:amount,interestCents:0,opened:this.life.day,due:this.life.day+ECONOMIC_RATES.loanTermDays,lastAccrued:this.life.day,lateDays:0};
-  return {ok:true,message:'Loan of $'+amount+' credited. Repay principal plus 8% annual interest by day '+this.loan.due+'.'};
- }
- accrueLoan(){
-  const l=this.loan;if(!l||l.principal===0)return;
-  if(this.life.day<=l.lastAccrued)return;
-  const days=this.life.day-l.lastAccrued;
-  // Hold interest in cents until paid; do not create money merely on accrual.
-  l.interestCents=Math.round(l.interestCents+days*l.principal*ECONOMIC_RATES.annualLoanRatePercent/365);
-  l.lastAccrued=this.life.day;
-  if(this.life.day>l.due)l.lateDays=this.life.day-l.due;
- }
- repay(amount){
-  if(!valid(amount))return {ok:false,message:'Enter a positive whole-dollar amount.'};
-  if(!this.life.open(this.life.place('hall')))return {ok:false,message:'The teller is closed. Return during opening hours.'};
-  if(!this.loan?.principal)return {ok:false,message:'No current loan.'};
-  this.accrueLoan();
-  const l=this.loan,interest=Math.ceil(l.interestCents/100);
-  const due=l.principal+interest;
-  const paid=Math.min(due,amount);
-  if(paid>this.life.money.checking)return {ok:false,message:'Not enough money in your everyday account.'};
-  if(!this.transfer('player.checking','bank.capital',paid,'loan payment').ok)
-    return {ok:false,message:'Unable to settle the payment.'};
-  const paidInterest=Math.min(interest,paid);
-  l.interestCents=Math.max(0,l.interestCents-paidInterest*100);
-  l.principal-=paid-paidInterest;
-  this.daily.interest+=paidInterest;this.lifetime.interest+=paidInterest;
-  if(!l.principal&&l.interestCents===0)this.loan=null;
-  return {ok:true,message:'Paid $'+paid+' ($'+paidInterest+' interest; $'+(paid-paidInterest)+' principal).'};
- }
- eat(item){
-  const bag=this.life.money.playerBag;
-  if(!FOOD[item]||!Number.isSafeInteger(bag[item])||bag[item]<=0)return {ok:false,message:'You do not own that food.'};
-  if(this.playerEnergy>=100)return {ok:false,message:'You are not hungry.'};
-  bag[item]--;
-  this.playerEnergy=Math.min(100,this.playerEnergy+FOOD[item]);
-  this.playerMeals++;
-  this.life.money.log(this.life.day,'meal','Ate '+item,0);
-  return {ok:true,message:'Ate '+item+'. Energy now '+this.playerEnergy+'/100.'};
- }
- dailyClose(){
-  if(this.lastClosedDay>=this.life.day)return;
-  const start=Math.max(this.lastClosedDay+1,2); // Day 1 has starting funds, no rent before first night.
-  for(let day=start;day<=this.life.day;day++){
-   this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,stateSpending:0,grants:0,unpaidBills:0,interest:0};
-   this.chargeHousehold();
-   this.chargeNpcHouseholds();
-   for(const p of this.life.places.values()){p.dailyExpenses=0;this.chargeBusiness(p.id);}
-   // Weekly intergovernmental transfers: federal/state grants fund council
-   // services from pre-existing public money, not automatic minting.
-   if(day%7===0){
-     const federal=Math.min(350,this.federalTreasury);
-     if(federal&&this.transfer('federal','council',federal,'Commonwealth local services grant').ok)this.addRevenue('grants',federal);
-     const state=Math.min(200,this.stateTreasury);
-     if(state&&this.transfer('state','council',state,'NSW local infrastructure grant').ok)this.addRevenue('grants',state);
-   }
-   this.accrueLoan();
-  }
-  this.lastClosedDay=this.life.day;
- }
- moneySupply(){
-  const l=this.life;
-  return l.money.total + l.treasury + this.federalTreasury+this.stateTreasury+this.bankCapital+
-    l.villagers.reduce((n,v)=>n+clamp(v.wallet),0)+
-    [...l.places.values()].reduce((n,p)=>n+clamp(p.operating)+clamp(p.till),0);
- }
- audit(){
-  const m=this.life.money;
-  return {moneySupply:this.moneySupply(),bankCapital:this.bankCapital,federalTreasury:this.federalTreasury,stateTreasury:this.stateTreasury,
-   depositLiability:m.checking+m.savings,bankVault:m.bankVault,
-   depositsBacked:m.bankVault===m.checking+m.savings,
-   journalBalanced:this.entries.every(e=>e.amount>0&&e.debit!==e.credit),
-   loanPrincipal:this.loan?.principal||0,interestAccrued:this.loan?Math.ceil(this.loan.interestCents/100):0,
-   rentArrears:this.playerRentArrears,utilityArrears:this.playerUtilityArrears,
-   energy:this.playerEnergy,day:this.lastClosedDay,daily:{...this.daily},
-   currentEntries:this.entries.slice(0,30)};
- }
- snapshot(){return {version:2,bankCapital:this.bankCapital,federalTreasury:this.federalTreasury,stateTreasury:this.stateTreasury,playerRentArrears:this.playerRentArrears,
-  playerUtilityArrears:this.playerUtilityArrears,playerEnergy:this.playerEnergy,playerMeals:this.playerMeals,
-  loan:this.loan?{...this.loan}:null,lastClosedDay:this.lastClosedDay,
-  sequence:this.sequence,entries:this.entries.slice(0,220),daily:{...this.daily},lifetime:{...this.lifetime}}}
- restore(s){
-  if(!s||s.version!==2)return;
-  for(const field of ['bankCapital','federalTreasury','stateTreasury','playerRentArrears','playerUtilityArrears','playerEnergy','playerMeals','lastClosedDay','sequence'])
-   if(Number.isSafeInteger(s[field])&&s[field]>=0&&s[field]<=1e9)this[field]=s[field];
-  this.playerEnergy=Math.min(100,this.playerEnergy);
-  if(s.loan&&valid(s.loan.principal)&&Number.isSafeInteger(s.loan.interestCents)&&s.loan.interestCents>=0)
-   this.loan={principal:s.loan.principal,interestCents:s.loan.interestCents,
-    opened:clamp(s.loan.opened),due:clamp(s.loan.due),lastAccrued:clamp(s.loan.lastAccrued),lateDays:clamp(s.loan.lateDays)};
-  else this.loan=null;
-  if(Array.isArray(s.entries))this.entries=s.entries.filter(e=>e&&valid(e.amount)&&typeof e.debit==='string'&&typeof e.credit==='string').slice(0,220);
-  for(const name of ['daily','lifetime'])if(s[name]&&typeof s[name]==='object'){
-   this[name]={...this[name]};
-   for(const field of Object.keys(this[name]))if(Number.isSafeInteger(s[name][field])&&s[name][field]>=0)this[name][field]=s[name][field];
-  }
- }
+}
+
+// The visitor settles overdue household bills at the bank.
+export function payBills(life) {
+  const f = fin(life), c = life.civic, me = c.player;
+  if (!life.open(life.place('bank'))) return 'The bank is closed (9:00–16:00).';
+  let owe = f.rentArrears + f.powerArrears;
+  if (owe <= 0) return 'You have no overdue bills.';
+  let paid = 0;
+  for (const pot of ['wallet', 'bank']) { const take = Math.min(owe, Math.floor(me[pot])); if (take > 0) { me[pot] -= take; owe -= take; paid += take; } }
+  if (paid <= 0) return 'You have nothing to pay with.';
+  const rent = Math.min(f.rentArrears, paid); f.rentArrears -= rent; f.powerArrears -= paid - rent;
+  c.treasury = r2(c.treasury + paid); f.visitorPaid += paid;
+  record(life, 'visitor', 'council', paid, 'Overdue rent and power');
+  return `Paid $${paid} of overdue bills. $${f.rentArrears + f.powerArrears} still owing.`;
+}
+
+export function overdue(life) { const f = fin(life); return f.rentArrears + f.powerArrears; }
+
+// Money held by the three tiers of government and the lending pool, for the books and the soak test.
+export function governmentMoney(life) { const f = fin(life); return f.federal + f.state; }
+
+export function economyReport(life) {
+  const f = fin(life), c = life.civic, cr = life.creditReport();
+  const biz = [...life.places.values()].filter((p) => p.target && p.kind !== 'home').map((p) => {
+    const s = f.biz[p.id] || { sales: 0, wages: 0, utilities: 0, rates: 0, unpaid: 0, supplies: 0 };
+    return { id: p.id, name: p.name, till: Math.round(p.till), sales: Math.round(s.sales), wages: Math.round(s.wages), rates: Math.round(s.rates), utilities: Math.round(s.utilities), unpaid: Math.round(s.unpaid), result: Math.round(s.sales - s.wages - s.rates - s.utilities) };
+  });
+  const people = life.villagers.reduce((n, v) => n + v.wallet + (v.savings || 0), 0);
+  const tills = [...life.places.values()].reduce((n, p) => n + p.till, 0);
+  return {
+    council: r2(c.treasury), commonwealth: f.federal, nsw: f.state, bank: cr.capital,
+    people: Math.round(people), tills: Math.round(tills), visitor: Math.round(c.player.wallet + c.player.bank),
+    total: Math.round(people + tills + c.treasury + f.federal + f.state + cr.capital + c.player.wallet + c.player.bank),
+    rentArrears: f.rentArrears, powerArrears: f.powerArrears,
+    daily: { ...f.daily }, lifetime: { ...f.lifetime },
+    wageArrears: life.villagers.reduce((n, v) => n + (v.wageArrears || 0), 0),
+    rateArrears: life.villagers.reduce((n, v) => n + (v.rateArrears || 0) + (v.housingArrears || 0), 0),
+    biz, entries: f.entries.slice(0, 16),
+  };
 }

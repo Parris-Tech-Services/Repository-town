@@ -18,6 +18,7 @@
     <h1>🏘 <span class="hud-title-full">Repository Town</span><span class="hud-title-short">Town</span> <span id="clock" aria-live="off"></span></h1>
     <button id="btn-hud-toggle" type="button" aria-controls="hud-details" aria-expanded="true" aria-label="Minimise town controls" title="Minimise controls">−</button>
   </div>
+  <div id="needs-strip"><span id="needs-status">🍽 32% · 💤 22%</span> <button id="btn-needs" type="button">Food &amp; rest</button> <button id="btn-wallet" type="button" title="Wallet, receipts and paid jobs">💳 Wallet</button></div>
   <div id="hud-details">
   <form id="search-form" role="search">
     <input id="search" list="house-list" placeholder="Repo name or A1" aria-label="Find a house" autocomplete="off">
@@ -28,14 +29,13 @@
     <button id="btn-map" aria-pressed="false">Bird's-eye</button>
     <button id="btn-capture" type="button" aria-pressed="false" title="Look around without holding a mouse button (L)">🎯 Capture mouse</button>
     <button id="btn-guide" type="button" title="Town guide & starting tour">🗺 Guide</button>
-    <button id="btn-wallet" type="button" title="Your cash, bank balance, wages and purchase history">💰 Wallet</button>
     <button id="btn-help">Help</button>
     <button id="btn-journal" type="button" title="Adventure quests and treasures (J)">📖 Quests <span id="expedition-count"></span></button>
     <button id="btn-npcs" type="button" title="Meet the town's characters">💬 NPCs</button>
     <a class="btn-link" href="people.html">NPC Lounge</a>
     <a class="btn-link" href="arcade.html">Arcades</a>
     <button id="btn-time" type="button" title="Jump the town clock to the next part of the day (T)">☀️ Day</button>
-    <button id="btn-sound" type="button" aria-pressed="true" title="Birdsong, crickets, wind, traffic, the town bell and footsteps">🔊 Sound</button>
+    <button id="btn-sound" type="button" aria-pressed="false" title="Birdsong, crickets, wind, traffic, the town bell and footsteps">🔇 Sound</button>
     <button id="btn-perf" type="button" aria-pressed="false" title="Cull distant objects for smoother frame rate on phones">⚡ Smooth</button>
     <button id="btn-exit" hidden>Exit house</button>
     <button id="btn-unstuck">Unstuck</button>

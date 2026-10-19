@@ -41,13 +41,15 @@ export function residentPrompt(r) {
   const time = String(r.currentTime || '').slice(0, 30);
   const work = String(r.workplace || current?.workplace || '').slice(0, 95);
   const where = r.role === 'villager'
-    ? 'HOME: you live at house '+coord+' on '+street+'. HOME IS NOT CURRENT LOCATION. '+
-      (here ? 'Current position from the game: '+here+' ('+movement+').' : 'Current position is unavailable; never guess a place.')+
+    ? 'HOME: house '+coord+' on '+street+'. This is HOME, not the current location. '+
+      (here ? 'Current place from the game simulation: '+here+' ('+movement+').' : 'Present whereabouts unknown; do not guess.')+
       (activity ? ' Current activity: '+activity+'.' : '')+
-      (work ? ' Usual workplace: '+work+' (NOT necessarily your current position).' : '')+
+      (work ? ' Usual workplace: '+work+' (not necessarily their current place).' : '')+
       (time ? ' Game time: '+time+'.' : '')
-    : 'You live in house '+coord+' on '+street+' and the visitor has come inside.';
+    : `You live in house ${coord} on ${street} and the visitor has come inside.`;
   const rooms = Array.isArray(r.rooms) ? r.rooms.map((x) => String(x).slice(0, 60)).slice(0, 12).join(', ') : '';
+  const scene = r.scene && typeof r.scene === 'object' ? r.scene : null;
+  const exhibitNear = scene && Array.isArray(scene.nearby) ? scene.nearby.slice(0,12).map(o => `${String(o.name || o.type || 'object').slice(0,80)} (${Math.max(0,Math.min(30,Number(o.distance)||0)).toFixed(1)} m${o.interactive?', interactive':''})`).join('; ') : '';
   const exhibits = Array.isArray(r.exhibits) ? r.exhibits.map((x) => String(x).slice(0, 80)).slice(0, 24).join('; ') : '';
   const games = Array.isArray(r.games) ? r.games.map((x) => String(x).slice(0, 80)).slice(0, 12).join(', ') : '';
   const live = Array.isArray(r.live) ? r.live.map((x) => String(x).slice(0, 120)).slice(0, 6).join(', ') : '';
@@ -59,10 +61,11 @@ export function residentPrompt(r) {
   return [
     `You are ${name}, a local in Repository Town: a little walkable 3D town (set near Dubbo, NSW) where every house was built from one of Josh Parris's software projects on GitHub. ${where}`,
     `Your personality: ${moodOf(name)}.${r.personality ? ` More specifically: ${String(r.personality).slice(0, 260)}` : ''}`,
-    'Game-world location and activity supersede any previously guessed street or landmark. Do not claim to be on Arcade Avenue, at home, or at work unless the supplied current position confirms it. Distinguish home, current position, and usual workplace. If location is unknown say so, never invent one.',
+    'Present location and activity from the town simulation outrank any conversation guess. Never substitute the home address, workplace, a destination or a street name for the actual present location. If unknown, say unknown; if travelling, say so. Correct earlier mistakes.',
     r.isPublic ? `Your house is the ${houseName} project (${kind}). ${summary}` : `${summary} The owner has approved the house name ${houseName} for the public town, so you may use that name. Do not reveal private URLs, README text or withheld project details.`,
     rooms ? `Rooms in your house: ${rooms}.` : '',
     exhibits ? `Things visitors can use inside (press E or the hand button): ${exhibits}.` : '',
+    scene ? `CURRENT room right now: ${String(scene.roomName||'room').slice(0,64)}; objects physically placed beside you: ${exhibitNear||'none verified nearby'}. These are position-based, not README guesses. Only refer to these when asked about objects around you; do not invent objects, visibility through walls, or directional claims you cannot check.` : '',
     games ? `Games playable in your house's arcade: ${games}.` : '',
     live ? `Links: ${live}.` : '',
     relicHint ? `Adventure Guild relic rumour you know: ${relicHint}.` : '',

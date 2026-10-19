@@ -3,8 +3,10 @@
 // when it is busy, they answer from the house's facts and the town's life.
 // Groq API keys are NEVER stored in the browser or included in client files.
 import { repoInfo } from './archive.js';
-import { groundedLocationReply } from './npc-location.js';
 import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
+import { answerSceneQuestion } from './scene-awareness.js';
+import { groundedLocationReply } from './npc-location.js';
+import { villagerProfile } from './villager-profiles.js';
 import { recordPlayerMessage, recordTownAction, socialContext, socialGossip } from './social.js';
 
 const LEGACY_KEY_STORE = 'repository-town.groq-keys';
@@ -26,10 +28,13 @@ async function askResidentProxy(id, house, name, f, role, history, town) {
   const personality = role === 'villager' ? villagerProfile(name, me?.job) : null;
   const life = me ? ` Right now: ${me.now}. Last meal: ${me.lastMeal}. At home: ${me.pantry}.` : town?.resident ? ` Right now at home: ${town.resident}.` : '';
   const news = town ? ` It is ${town.time}, day ${town.day}. Town news: ${town.gossip.slice(0, 4).join('; ')}.` : '';
+  const civic=town?.politics;
+  const civicProfile=civic?` Civic background: ${civic.role}; attitude to politics: ${civic.temperament}; local issue: ${civic.issue}. ${civic.memory||''} ${civic.priorities?'Talks publicly about '+civic.priorities+'.':''} ${civic.portfolio?'Council portfolio: '+civic.portfolio+'.':''} Never claim to know a private ballot. If reserved or avoids politics, do not initiate political chat and respectfully change the subject when asked.`:'';
   const resident = {
     name,
     role: role === 'villager' ? 'villager' : 'resident',
     coordinate: house.coordinate,
+    // The house coordinate is a resident's home, not their current position.
     currentLocation: town?.location || null,
     currentActivity: me?.now || town?.resident || '',
     currentTime: town?.time || '',
@@ -41,6 +46,7 @@ async function askResidentProxy(id, house, name, f, role, history, town) {
     summary: house.summary,
     isPublic: Boolean(house.repo),
     rooms: f.rooms.slice(0, 12),
+    scene: f.scene ? { roomName: f.scene.roomName, roomCount: f.scene.roomCount, nearby: f.scene.nearby.slice(0, 12) } : null,
     exhibits: f.exhibits.slice(0, 24),
     games: f.games.slice(0, 12),
     live: f.live.slice(0, 6),
@@ -49,7 +55,7 @@ async function askResidentProxy(id, house, name, f, role, history, town) {
     neighbourHint: f.neighbour ? `${residentName(f.neighbour.coordinate)} at ${f.neighbour.coordinate} (${f.neighbour.name}, ${f.neighbour.kind})` : '',
     errandHint: f.errandTarget ? `${f.errandTarget.coordinate} (${f.errandTarget.name})` : '',
     visitedTarget: Boolean(f.visitedTarget),
-    personality: ((personality ? `${personality[0]}; ${personality[1]}; especially interested in ${personality[2]}.` : '') + life).trim(),
+    personality: ((personality ? `${personality[0]}; ${personality[1]}; especially interested in ${personality[2]}.` : '') + life + civicProfile).trim(),
     social: { ...(f.social || {}), gossip: `${f.social?.gossip || ''}${news}`.trim() },
   };
   let res;
@@ -77,22 +83,10 @@ async function askResidentProxy(id, house, name, f, role, history, town) {
 }
 
 const NAMES = ['Ada', 'Bram', 'Cleo', 'Dorian', 'Edie', 'Finn', 'Greta', 'Hugo', 'Iris', 'Jasper', 'Kit', 'Lena', 'Milo', 'Nell', 'Otis', 'Pip', 'Quinn', 'Rosa', 'Sol', 'Tess', 'Uma', 'Vic', 'Wren', 'Xavi', 'Yara', 'Zed'];
-const VILLAGER_PROFILES = {
-  Mabel: ['community gardener', 'practical and sunny', 'seedlings and shared gardens'], Arlo: ['amateur engineer', 'curious and hands-on', 'tinkering and mechanisms'],
-  Bea: ['birdwatcher', 'gentle and observant', 'birds and trees'], Cas: ['dramatic storyteller', 'theatrical but kind', 'turning errands into adventures'],
-  Dot: ['detail collector', 'precise and easily delighted', 'maps and overlooked patterns'], Ezra: ['local history keeper', 'warm and reflective', 'old stories and archives'],
-  Flo: ['neighbourhood baker', 'upbeat and generous', 'recipes and friendly welcomes'], Gus: ['laid-back fixer', 'dry and reassuring', 'repairs and useful tools'],
-  Hattie: ['tea-and-etiquette enthusiast', 'polite with a mischievous streak', 'tea and well-timed pauses'], Ivo: ['puzzle setter', 'playful and analytical', 'riddles and logic'],
-  June: ['moonlit gardener', 'calm and dreamy', 'night walks and moon phases'], Kip: ['neighbourhood courier', 'brisk and helpful', 'shortcuts and messages'],
-  Lou: ['street musician', 'rhythmic and warm', 'melodies and found sounds'], Merv: ['retired code reviewer', 'deadpan and exacting', 'clear explanations and suspicious shortcuts'],
-  Nora: ['quiet caretaker', 'steady and reassuring', 'tidy spaces and helping neighbours'], Ollie: ['arcade enthusiast', 'excitable and competitive', 'games and unnecessary high scores'],
-  Peg: ['repair café regular', 'encouraging and practical', 'repair and reuse'], Rafe: ['amateur astronomer', 'thoughtful and enthusiastic', 'constellations and clear nights'],
-  Sadie: ['curious book-and-building collector', 'bright, nosy and quietly thoughtful', 'book stacks and unusual rooms'], Theo: ['philosophical walker', 'slow, thoughtful and gently funny', 'good questions and changing viewpoints'],
-  Una: ['native-plant champion', 'earnest and encouraging', 'local plants and habitat'], Vern: ['friendly town gossip', 'cheerful and conspiratorial', 'neighbourly news and unusual sightings'],
-  Win: ['weather watcher', 'observant and lightly dramatic', 'clouds, wind and changing light'], Zara: ['community organiser', 'decisive and welcoming', 'bringing people together and making plans'],
-};
+// Stable public export retained for all existing callers and tests.
+export { villagerProfile };
 // Temperament and interests per name; the town simulation (src/world/life.js) gives the job.
-export function villagerProfile(name, job) { const p = VILLAGER_PROFILES[name] || ['town neighbour', 'friendly and curious', 'the people and projects of Repository Town']; return job ? [job, p[1], p[2]] : p; }
+
 
 export function residentName(coordinate) {
   const n = coordinate.charCodeAt(0) - 65 + parseInt(coordinate.slice(1), 10) * 7;
@@ -130,14 +124,45 @@ export function getErrandsSummary() {
 }
 
 // Everything the resident knows: the house's own facts, plus the README when readable.
-async function factsFor(house, name = '', allHouses = []) {
+async function factsFor(house, name = '', allHouses = [], scene = null) {
   const rooms = house.int.rooms.map((r) => r.name).filter(Boolean);
   const exhibits = house.int.rooms.flatMap((r) => r.props.filter((p) => p[1] && p[2]?.do).map((p) => `${p[1]} (${r.name})`));
   const games = house.int.rooms.flatMap((r) => r.props.filter((p) => p[2]?.do === 'game').map((p) => p[2].title));
   const data = house.repo ? await repoInfo(house.repo).catch(() => null) : null;
   const readme = data?.readme ? data.readme.replace(/```[\s\S]*?```/g, '').replace(/<[^>]+>/g, '').replace(/\n{3,}/g, '\n\n').slice(0, 2500) : '';
   const townCtx = townContextFor(house, name, allHouses);
-  return { rooms, exhibits, games, readme, live: (house.links || []).map((l) => l.url), social: socialContext(name), ...townCtx };
+  return { rooms, exhibits, games, readme, scene, live: (house.links || []).map((l) => l.url), social: socialContext(name), ...townCtx };
+}
+
+// The same truthful, consent-aware civic dialogue is used online and offline.
+// AI never invents a secret ballot or overrides someone's expressed boundary.
+export function answerPoliticsQuestion(town,text) {
+  const p=town?.politics;
+  if(!p)return null;
+  const q=String(text||'').toLowerCase();
+  if(!/\b(vot(e|ed|ing|es)?|ballot|elect(ion|ed|ions)?|politic(s|al)?|mayor|council(lor|lor'?s|lors)?|campaign(ing)?|candidate|rates|tax(?:es)?|local government|town hall|public forum|policy|debate)\b/.test(q))return null;
+  if(/\b(who|which|what).*(vot(e|ed|ing)|ballot)|how did you vote|who did you vote/.test(q))
+    return "My ballot's private. I don't ask other people how they voted either.";
+  if(p.temperament==='avoids')return "Oh, I'd rather steer clear of politics, thanks. How's your day been?";
+  if(p.temperament==='reserved'&&p.role==='resident')
+    return "I keep my views to myself, especially at election time. Happy to talk about something else.";
+  if(p.role==='mayoral candidate') {
+    const subject=p.priorities||'community services';
+    if(/opponent|other candidate|bad|corrupt|scandal/.test(q))
+      return "I'd rather discuss the council's actual work than make claims about anyone else.";
+    return "I'm standing on practical improvements to "+subject+". I'm answering questions at public forums when I'm free from work. There's more than one concern in town, though.";
+  }
+  if(p.role==='councillor')
+    return "I'm on the council, looking after the "+p.portfolio+" portfolio. We have meetings with recorded votes, and I hear residents' concerns at the square. I can't promise every proposal will pass.";
+  if(p.temperament==='indifferent')
+    return "I don't follow council business very closely, to be fair. If something affects the town directly, I'll take notice.";
+  if(p.temperament==='practical')
+    return "Council decisions matter when they affect "+p.issue+". I'd rather see the work actually get done than hear speeches about it.";
+  if(p.temperament==='curious')
+    return "I've been following the discussion about "+p.issue+". I try to hear a few perspectives before drawing a conclusion.";
+  if(p.temperament==='engaged')
+    return "I've got a few thoughts on "+p.issue+". Different people at the public forum see it differently, and the council has to account for that.";
+  return "I mainly pay attention to "+p.issue+" when the election comes around. Still making up my mind about some things.";
 }
 
 // Town-life answers (src/world/life.js via townpanels.townContext): meals, work,
@@ -162,8 +187,12 @@ function townReply(t, town, pick) {
 function scripted(house, name, f, text, role, town) {
   const t = text.toLowerCase().trim();
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
-  const locationAnswer=groundedLocationReply(town?.location,text);
-  if(locationAnswer)return locationAnswer;
+  const civicReply=answerPoliticsQuestion(town,text);
+  if(civicReply)return civicReply;
+  const locationReply=groundedLocationReply(town?.location,text);
+  if(locationReply)return locationReply;
+  const sceneReply = answerSceneQuestion(f.scene, text, role);
+  if (sceneReply) return sceneReply;
   const fromTown = townReply(t, town, pick);
   if (fromTown) return fromTown;
   const exhibit = () => pick(f.exhibits)?.replace(/ \(.*\)$/, '') || 'the archive';
@@ -258,15 +287,17 @@ export function npcBehaviour(x, ctx) {
   const id = x.act.role === 'villager' ? `villager:${name}` : house.coordinate;
   const job = ctx.town?.()?.self?.job;
   return {
-    title: ctx.workplace ? `${name} · ${x.act.job||job||'shopkeeper'} · ${ctx.workplace}` : x.act.role === 'villager' ? `${name} · ${job ? `${job} · ` : ''}lives at ${house.coordinate} · ${house.name}` : `${name} · resident of ${house.name}`,
+    title: x.act.role === 'villager' ? `${name} · ${job ? `${job} · ` : ''}lives at ${house.coordinate} · ${house.name}` : `${name} · resident of ${house.name}`,
     body: `<div class="chat"><p class="chat-location dim" aria-live="polite"></p><div class="chat-log" aria-live="polite"></div>
       <div class="chat-chips">
         <button type="button" class="chat-chip" data-ask="Any relic hints for the Adventure Guild?">🧭 Relic hint</button>
         <button type="button" class="chat-chip" data-ask="Any gossip about the neighbours on this street?">🗣️ Neighbours</button>
         <button type="button" class="chat-chip" data-ask="Who are your friends or enemies in town, and why?">💞 Friendships</button>
         <button type="button" class="chat-chip" data-ask="Do you have a small errand I can help with?">📦 Small errand</button>
+        <button type="button" class="chat-chip" data-ask="What objects are near you right now?">🪑 Nearby objects</button>
         <button type="button" class="chat-chip" data-ask="What did you eat today?">🍞 Meals</button>
         <button type="button" class="chat-chip" data-ask="What's happening in town?">📰 Town news</button>
+        ${x.act.role==='villager'?'<button type="button" class="chat-chip" data-ask="What do you think about the town election?">🏛️ Town politics</button>':''}
         <button type="button" class="chat-chip" data-ask="Where are the shops?">🛒 Shops</button>
         <button type="button" class="chat-chip" data-ask="What games can I play around here?">🎮 Games</button>
       </div>
@@ -277,8 +308,11 @@ export function npcBehaviour(x, ctx) {
       const panel = root.closest?.('#panel') || root;
       const log = root.querySelector('.chat-log'), form = root.querySelector('.chat-form'), input = root.querySelector('.chat-input'), brain = root.querySelector('.chat-brain');
       const locationLabel=root.querySelector('.chat-location');
-      const renderLocation=()=>{const loc=ctx.town?.()?.location;locationLabel.textContent=loc?(loc.status==='travelling'?'🚶 ':'📍 ')+loc.name+(loc.activity?' · '+loc.activity:''):'';};
-      renderLocation();
+      const updateLocationLabel=()=>{
+        const loc=ctx.town?.()?.location;
+        locationLabel.textContent=loc?(loc.status==='travelling'?'🚶 ':'📍 ')+loc.name+(loc.activity?' · '+loc.activity:''):'';
+      };
+      updateLocationLabel();
       const history = chats[id] || (chats[id] = []);
       const syncViewport = () => {
         const vv = window.visualViewport;
@@ -323,11 +357,17 @@ export function npcBehaviour(x, ctx) {
         history.push({ role: 'user', content: text });
         render(log, history, name);
         log.insertAdjacentHTML('beforeend', `<p class="npc dim thinking">${esc(name)} is thinking…</p>`);
-        facts = await factsFor(house, name, allHouses);
+        // The scene is sampled per message, so a wandering resident knows the room they are
+        // in right now; spatial questions are answered from it, never from a model's guess.
+        const scene = ctx.getNearbyScene?.(x) || null;
+        facts = await factsFor(house, name, allHouses, scene);
         const town = ctx.town?.() || null;
-        renderLocation();
-        // Game-state location facts outrank AI guesses, even when AI is offline.
-        let reply=groundedLocationReply(town?.location,text);
+        updateLocationLabel();
+        // Civic facts, whereabouts and room objects come from real game state.
+        // Only open-ended dialogue needs the AI model.
+        let reply=answerPoliticsQuestion(town,text) ||
+          groundedLocationReply(town?.location,text) ||
+          answerSceneQuestion(facts.scene,text,x.act.role);
         if(!reply){
           try {reply=await askResidentProxy(id,house,name,facts,x.act.role,history,town);}
           catch(err){

@@ -1,10 +1,16 @@
 import * as THREE from 'three';
 import { buildFarmhouseInterior } from './farmhouse-interior.js';
+import { buildHotelInterior } from './hotel-interior.js';
 import { buildBakeryInterior } from './bakery-interior.js';
+import { buildBankInterior } from './bank-interior.js';
+import { buildStoreInterior } from './store-interior.js';
+import { buildCafeInterior } from './cafe-interior.js';
+import { buildPubInterior } from './pub-interior.js';
 
 // The twenty high-street services share a safe walkable plan, with different
 // fixtures, colours and exhibits. They are built only while the player is inside.
 const FITTINGS = {
+  hotel:['Railway Hotel','Reception desk','Guest rooms',0xc3a783,'Book a guest room','The hotel has four bookable bedrooms.'],
   hall:['Town Hall','Council desk','Town notices',0xc3b88f,'Talk to the mayor','The Town Ledger keeps track of life in the neighbourhood.'],
   store:['General Store','Shop counter','Groceries and stock',0xc0a16f,'Browse the general store','Eggs, milk, flour, tea and bread arrive from the farms and freight train.'],
   greengrocer:['Greengrocer','Produce counter','Fruit and vegetables',0x91b877,'Buy locally grown produce','Market Garden vegetables and orchard fruit are sold here.'],
@@ -18,7 +24,7 @@ const FITTINGS = {
   garden:['Market Garden shed','Vegetable stall','Seed and produce boxes',0x87b873,'See the vegetables','Local vegetables are picked for shops and cafés.'],
   silo:['Wheat Farm shed','Grain desk','Grain sacks',0xc9b279,'View this harvest','Grain heads to the flour mill for baking.'],
   farmhouse:['Farmhouse kitchen','Kitchen table','Family photos',0xa59c89,'Visit the farmhouse','Farm families gather here for meals.'],
-  'town-hall':['Council chambers','Public service desk','Town notices',0xbaaa83,'Council decisions, elections and public services','Citizens meet here to discuss the town budget and propose new projects.'],
+  'town-hall':['Public meeting hall','Public service desk','Town notices',0xbaaa83,'Council decisions, elections and public services','Citizens meet here to discuss the town budget and propose new projects.'],
   bank:['Banking hall','Teller counter','Account records',0x6c9fba,'Deposit and withdraw Town Credits','Money, wages and civic spending are recorded by the Community Bank.'],
   post:['Post office','Postal counter','Sorting shelves',0xce8e63,'Send a parcel or check deliveries','Mail is collected, sorted and delivered by the town posties.'],
   market:['Market hall','Fresh produce stall','Produce crates',0x90ad67,'Buy fresh produce','The shelves are stocked by the farm, mill and other local producers.'],
@@ -43,10 +49,18 @@ const BASE_W=14, BASE_D=18, FRONT=6, BACK=-12, EDGE=7;
 const WALL=0.24;
 
 export function buildCivicInterior(site,makeLabel) {
+  // A family's home must never regress to the single-room retail fallback.
   if(site.id==='farmhouse')return buildFarmhouseInterior(site,makeLabel);
-  if(site.id==='bakery')return buildBakeryInterior(site,makeLabel);
+  if(site.id==='hotel')return buildHotelInterior(site,makeLabel);
   const [roomTitle,deskName,featureName,accent,deskInfo,featureInfo] =
     FITTINGS[site.id] || [site.name,'Service desk','Town noticeboard',0x98a8b3,'Visit this workplace','This building supports the town.'];
+  // The bakery has its own researched layout: shop floor, counter and a visible production kitchen.
+  if(site.id==='bakery')return buildBakeryInterior(site,makeLabel,roomTitle);
+  // The bank: queue lane, tellers at the back, advice desks, private office, ATMs, vault.
+  if(site.id==='bank')return buildBankInterior(site,makeLabel,roomTitle);
+  if(site.id==='store')return buildStoreInterior(site,makeLabel,roomTitle);
+  if(site.id==='cafe')return buildCafeInterior(site,makeLabel,roomTitle);
+  if(site.id==='pub')return buildPubInterior(site,makeLabel,roomTitle);
   const group=new THREE.Group();
   group.name='Inside '+site.name;
   const colliders=[],interactables=[],sceneObjects=[],placedProps=[];
@@ -114,33 +128,6 @@ export function buildCivicInterior(site,makeLabel) {
   add('counter',deskName,'civic-ledger',deskInfo,0,-4.9);
   add('display',featureName,'info',featureInfo,-4.7,-3.45);
   add('notices','Town noticeboard','info','Ask the staff about '+site.name+'. Visit the service counter to open the Town Ledger.',4.7,-3.45);
-  if(site.id==='hall'){
-    // A small credit-union teller counter within Town Hall, not a pretend
-    // standalone bank building. Keep the main council desk open to visitors.
-    box(1.50,.82,.65,4.10,.41,-2.80,0x7a6551);
-    box(.82,.38,.08,4.10,1.10,-2.82,0x718791);
-    text('Community Bank',4.25,2.35,-2.5);
-    add('bank','Talk to the Community Bank teller','bank-service',
-      'Deposit cash, withdraw cash and move funds between everyday and savings. The bank is closed outside Town Hall hours.',
-      3.55,-2.05);
-  }
-  // Place three physical job tasks per workplace. Progress requires visiting
-  // these stations, not merely standing idle until a wage timer expires.
-  const duties={
-    store:[['check-expiry','Check product expiry dates'],['refill-shelves','Restock the grocery shelves'],['count-stock','Count stock and record inventory']],
-    garden:[['water-plants','Check irrigation and water plants'],['weed-beds','Remove weeds from vegetable beds'],['pack-produce','Pack vegetables for market']],
-    depot:[['sort-freight','Sort incoming freight'],['verify-manifest','Verify the goods manifest'],['stack-parcels','Stack and secure parcels']],
-    post:[['sort-mail','Sort mail into delivery rounds'],['label-parcels','Label outgoing parcels'],['prepare-route','Prepare the postie route']],
-    hall:[['clean-floors','Clean the public entrance'],['file-records','File council paperwork'],['inspect-lighting','Inspect public lighting']]
-  };
-  const spots=[[-3.45,1.4],[0,-2.35],[3.45,1.4]];
-  (duties[site.id]||[]).forEach(([task,label],i)=>{
-    const [x,z]=spots[i];
-    box(.78,.55,.70,x,.28,z,[0x8b967d,0xa88a67,0x7a9aa5][i]);
-    text(label,x,1.8,z);
-    add('duty-'+task,label,'job-task','Workplace duty for a paid town shift.',x,z+1.05);
-    interactables[interactables.length-1].act.jobTask=task;
-  });
   placedProps.push({type:'counter',room:0},{type:'shelves',room:0},{type:'noticeboard',room:0});
   const rooms=[{name:roomTitle,x0:-EDGE,x1:EDGE,z0:BACK,z1:FRONT,w:BASE_W,d:BASE_D,parent:-1}];
   return {

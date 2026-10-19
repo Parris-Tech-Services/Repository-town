@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Builder } from './builder.js';
 import { buildExterior } from './exterior.js';
+import { exteriorColliders } from './exterior-collision.js';
 
 // Town layout: 26 columns (A–Z) × 8 rows (streets). Every house faces +z onto its
 // street. Rows are merged into one mesh each so the whole town is ~10 draw calls.
@@ -46,19 +47,21 @@ export function buildTown(scene, houses, streets) {
       for (const side of [-1, 1]) {
         const lz = z + side * 6.0, lx = x + (side > 0 ? 13 : 0);
         deco.cyl(0x2f3338, 0.08, 4.2, lx, 2.1, lz);
+        deco.solid(0.5, 0.5, lx, lz);           // the pole is solid; the arm and lamp head are overhead
         deco.box(0x2f3338, 0.08, 0.08, 0.9, lx, 4.15, lz - side * 0.4);
         heads.box(0x9fd3ea, 0.42, 0.2, 0.42, lx, 4.0, lz - side * 0.85);
       }
     }
   }
-  // Town Guide kiosk at the starting square (between the M4 road and the footpath; no
-  // collider, so people walk past it freely).
+  // Town Guide kiosk at the starting square (between the M4 road and the footpath).
   const guideZ = lotPosition('M4').z + 12.8;
   deco.cyl(0x6b4a2e, 0.12, 1.8, 0, 0.9, guideZ);
   deco.box(0x3a5a78, 1.5, 1.0, 0.14, 0, 1.75, guideZ);
   deco.box(0xf4efe4, 1.32, 0.82, 0.16, 0, 1.75, guideZ);
   deco.box(0xd99b38, 1.62, 0.14, 0.24, 0, 2.3, guideZ);
+  deco.solid(1.7, 0.4, 0, guideZ);              // the sign board is solid so nobody walks through it
   group.add(deco.build());
+  colliders.push(...deco.solids);
   const lampMat = new THREE.MeshLambertMaterial({ color: 0xfff1c8, emissive: 0xffd27a, emissiveIntensity: 0 });
   const lamps = new THREE.Mesh(Builder.merge(heads.glass), lampMat);
   group.add(lamps);
@@ -76,7 +79,9 @@ export function buildTown(scene, houses, streets) {
     const mesh = hb.build();
     mesh.position.set(lot.x, 0, lot.z);
     group.add(mesh);
-    colliders.push({ x0: lot.x - fp.w / 2, x1: lot.x + fp.w / 2, z0: lot.z - fp.d / 2, z1: lot.z + fp.front - 0.05 });
+    // A single solid rectangular footprint blocked every visible front door.
+    // Reserve the real 3D doorway and keep the rest of the building solid.
+    colliders.push(...exteriorColliders(fp,lot.x,lot.z));
     for (const y of fp.yard) colliders.push({ x0: lot.x + y.x0, x1: lot.x + y.x1, z0: lot.z + y.z0, z1: lot.z + y.z1 });
     const doorPos = new THREE.Vector3(lot.x + fp.door.x, 0, lot.z + fp.front);
     lots.set(h.coordinate, { house: h, lot, fp, doorPos, mesh });
