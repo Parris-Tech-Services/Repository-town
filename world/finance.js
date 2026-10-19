@@ -158,6 +158,7 @@ export class TownFinance {
  borrow(amount){
   const m=this.life.money;
   if(![100,200,400].includes(amount))return {ok:false,message:'Available loans are $100, $200 or $400.'};
+  if(!this.life.open(this.life.place('hall')))return {ok:false,message:'The Town Hall bank is closed. Return during teller hours.'};
   if(this.loan?.principal>0)return {ok:false,message:'Repay the existing loan first.'};
   if(this.playerRentArrears||this.playerUtilityArrears)return {ok:false,message:'Clear overdue household bills first.'};
   if(Object.keys(m.completedJobs).length===0)return {ok:false,message:'Complete paid work before applying for credit.'};
@@ -179,6 +180,7 @@ export class TownFinance {
  }
  repay(amount){
   if(!valid(amount))return {ok:false,message:'Enter a positive whole-dollar amount.'};
+  if(!this.life.open(this.life.place('hall')))return {ok:false,message:'The teller is closed. Return during opening hours.'};
   if(!this.loan?.principal)return {ok:false,message:'No current loan.'};
   this.accrueLoan();
   const l=this.loan,interest=Math.ceil(l.interestCents/100);
