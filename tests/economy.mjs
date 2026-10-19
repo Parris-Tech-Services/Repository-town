@@ -64,11 +64,11 @@ assert.equal(m.finishJob(town,'bakery').ok,false);
 assert.equal(m.startJob(town,'bakery-assistant','bakery').ok,false);
 assert.equal(sum(),initial);
 // Freight invoices transfer value from destination to origin; no goods vanish.
-const src=town.place('silo'),dest=town.place('mill'),originalSrc=src.operating,originalDest=dest.operating;
-src.out.grain=12;
+const sourceFarm=town.place('silo'),dest=town.place('mill'),originalSrc=sourceFarm.operating,originalDest=dest.operating;
+sourceFarm.out.grain=12;
 const truck=town.trucks[0];truck.job={from:'silo',to:'mill',good:'grain',n:4};truck.leg='pickup';
 town.truckArrived(truck);assert.equal(truck.load.n,4);
-town.truckArrived(truck);assert.equal(src.operating,originalSrc+4);assert.equal(dest.operating,originalDest-4);
+town.truckArrived(truck);assert.equal(sourceFarm.operating,originalSrc+4);assert.equal(dest.operating,originalDest-4);
 assert.equal(sum(),initial);
 // Reload cannot reset wages or completed shift history.
 const snap=town.snapshot(),other=new TownLife({homes});other.restore(snap);
