@@ -1,3 +1,4 @@
+import { locateVillager } from './npc-location.js';
 // Panels for town life: shop counters, farms, the Town Ledger and the town guide, plus
 // the gossip and Expedition relic hints villagers share in conversation (src/ui/npc.js).
 import { GOODS, amount, timeText } from '../world/life.js';
@@ -143,6 +144,8 @@ export function townContext(life, v, resident) {
   return {
     time: life.time(), day: life.day, daylight: life.isDay(),
     self: v ? life.describe(v) : null,
+    // Live position is separate from home address and job destination.
+    location: v ? locateVillager(life,v) : null,
     resident: resident || null,
     gossip: gossip(life, v),
     relics: left.slice(0, 3).map((r) => ({ name: r.name, clue: r.clue, hint: r.hint })),
