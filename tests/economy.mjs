@@ -20,6 +20,7 @@ assert.equal(store.stock.bread,bread-1);assert.equal(store.operating,operating+5
 assert.equal(m.checking,95);assert.equal(m.playerBag.bread,1);assert.equal(sum(),initial);
 assert.equal(town.payPlayerPurchase('store','unknown').ok,false);
 assert.equal(town.payPlayerPurchase('cafe','bread').ok,true);
+town.minute=11*60;
 assert.equal(town.payPlayerPurchase('pub','pie').ok,true);
 assert.equal(sum(),initial);
 // Missing money and stock never trigger partial transactions.
