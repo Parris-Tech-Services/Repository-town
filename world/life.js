@@ -533,11 +533,11 @@ export class TownLife {
   }
 
   // Saves just what matters to resume tomorrow where the town left off.
-  snapshot() { return { day: this.day, minute: this.minute, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth]), villagers: this.villagers.map((v) => [v.id, v.pantry, v.wallet, v.lastMeal, v.meals]) }; }
+  snapshot() { return { day: this.day, minute: this.minute, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth, p.supervisedBatch||null]), villagers: this.villagers.map((v) => [v.id, v.pantry, v.wallet, v.lastMeal, v.meals]) }; }
   restore(s) {
     if (!s || typeof s !== 'object') return;
     this.day = s.day || 1; this.minute = s.minute || 7 * 60;
-    for (const [id, stock, out, till, growth] of s.places || []) { const p = this.place(id); if (p) Object.assign(p, { stock, out, till, growth: growth ?? p.growth }); }
+    for (const [id, stock, out, till, growth, supervisedBatch] of s.places || []) { const p = this.place(id); if (p) Object.assign(p, { stock, out, till, growth: growth ?? p.growth, supervisedBatch: supervisedBatch||null }); }
     for (const [id, pantry, wallet, lastMeal, meals] of s.villagers || []) { const v = this.villagers[id]; if (v) Object.assign(v, { pantry, wallet, lastMeal, meals: meals || [] }); }
   }
 }
