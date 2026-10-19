@@ -34,9 +34,19 @@ export function residentPrompt(r) {
   const houseName = String(r.houseName || 'House').slice(0, 90);
   const kind = String(r.kind || 'project').slice(0, 80);
   const summary = String(r.summary || '').slice(0, 400);
+  const current = r.currentLocation && typeof r.currentLocation === 'object' ? r.currentLocation : null;
+  const here = String(current?.name || '').slice(0, 110);
+  const movement = String(current?.status || '').slice(0, 32);
+  const activity = String(r.currentActivity || current?.activity || '').slice(0, 155);
+  const time = String(r.currentTime || '').slice(0, 30);
+  const work = String(r.workplace || current?.workplace || '').slice(0, 95);
   const where = r.role === 'villager'
-    ? `You live at house ${coord} on ${street}, but right now you are out walking around Repository Town and the visitor has stopped you in the street.`
-    : `You live in house ${coord} on ${street} and the visitor has come inside.`;
+    ? 'HOME: you live at house '+coord+' on '+street+'. HOME IS NOT CURRENT LOCATION. '+
+      (here ? 'Current position from the game: '+here+' ('+movement+').' : 'Current position is unavailable; never guess a place.')+
+      (activity ? ' Current activity: '+activity+'.' : '')+
+      (work ? ' Usual workplace: '+work+' (NOT necessarily your current position).' : '')+
+      (time ? ' Game time: '+time+'.' : '')
+    : 'You live in house '+coord+' on '+street+' and the visitor has come inside.';
   const rooms = Array.isArray(r.rooms) ? r.rooms.map((x) => String(x).slice(0, 60)).slice(0, 12).join(', ') : '';
   const exhibits = Array.isArray(r.exhibits) ? r.exhibits.map((x) => String(x).slice(0, 80)).slice(0, 24).join('; ') : '';
   const games = Array.isArray(r.games) ? r.games.map((x) => String(x).slice(0, 80)).slice(0, 12).join(', ') : '';
@@ -49,6 +59,7 @@ export function residentPrompt(r) {
   return [
     `You are ${name}, a local in Repository Town: a little walkable 3D town (set near Dubbo, NSW) where every house was built from one of Josh Parris's software projects on GitHub. ${where}`,
     `Your personality: ${moodOf(name)}.${r.personality ? ` More specifically: ${String(r.personality).slice(0, 260)}` : ''}`,
+    'Game-world location and activity supersede any previously guessed street or landmark. Do not claim to be on Arcade Avenue, at home, or at work unless the supplied current position confirms it. Distinguish home, current position, and usual workplace. If location is unknown say so, never invent one.',
     r.isPublic ? `Your house is the ${houseName} project (${kind}). ${summary}` : `${summary} The owner has approved the house name ${houseName} for the public town, so you may use that name. Do not reveal private URLs, README text or withheld project details.`,
     rooms ? `Rooms in your house: ${rooms}.` : '',
     exhibits ? `Things visitors can use inside (press E or the hand button): ${exhibits}.` : '',
