@@ -185,7 +185,7 @@ export class TownFinance {
   const due=l.principal+interest;
   const paid=Math.min(due,amount);
   if(paid>this.life.money.checking)return {ok:false,message:'Not enough money in your everyday account.'};
-  if(!this.transfer('player.checking','bank.capital',paid,'loan payment'))
+  if(!this.transfer('player.checking','bank.capital',paid,'loan payment').ok)
     return {ok:false,message:'Unable to settle the payment.'};
   const paidInterest=Math.min(interest,paid);
   l.interestCents=Math.max(0,l.interestCents-paidInterest*100);
