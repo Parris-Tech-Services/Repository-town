@@ -189,6 +189,10 @@ export class TownLife {
   payWageSource(site,amount){
     if(!Number.isSafeInteger(amount)||amount<=0)return false;
     if(this.isPublicPayroll(site)){
+      if(site==='school'||site==='clinic'){
+        if(this.finance.stateTreasury<amount)return false;
+        this.finance.stateTreasury-=amount;return true;
+      }
       if(this.treasury<amount)return false;
       this.treasury-=amount;return true;
     }
@@ -578,9 +582,11 @@ export class TownLife {
       v.wallet+=wage;this.stats.wagesPaid+=wage;
       v.wageArrears=Math.max(0,arrears-(wage-base));
       if(this.isPublicPayroll(v.work)){
-        this.finance.record('council','npc:'+v.id,wage,'public wages and arrears '+v.job);
-        this.finance.daily.councilSpending+=wage;
-        this.finance.lifetime.councilSpending+=wage;
+        const stateFunded=v.work==='school'||v.work==='clinic';
+        this.finance.record(stateFunded?'state':'council','npc:'+v.id,wage,'public wages and arrears '+v.job);
+        const field=stateFunded?'stateSpending':'councilSpending';
+        this.finance.daily[field]+=wage;
+        this.finance.lifetime[field]+=wage;
       }else if(p){
         const cash=beforeTill-(p.till||0),bank=beforeOperating-(p.operating||0);
         if(cash>0)this.finance.record('register:'+p.id,'npc:'+v.id,cash,'wages '+v.job);
