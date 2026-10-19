@@ -100,34 +100,26 @@ export class TownFinance {
   this.lifetime[type]=(this.lifetime[type]||0)+amount;
  }
  chargeHousehold(){
-  const m=this.life.money,days=this.life.day;
-  const settle=(due,arrearsField,type)=>{
-   let balance=this[arrearsField]+due;
-   if(balance<=0)return;
-   let amount=Math.min(balance,m.checking);
-   if(amount>0&&this.transfer('player.checking','council',amount,'household '+type).ok)balance-=amount;
-   amount=Math.min(balance,m.cash);
-   if(amount>0&&this.transfer('player.cash','council',amount,'household '+type).ok)balance-=amount;
-   this[arrearsField]=balance;
-   this.addRevenue(type,due+this[arrearsField]-balance); // overridden below
-   if(balance>0){this.daily.unpaidBills+=balance;this.lifetime.unpaidBills+=Math.max(0,balance-due);}
+  const settle=(due,field,category)=>{
+    let remaining=this[field]+due;
+    let paid=0;
+    for(const account of ['player.checking','player.cash']){
+      const balance=this.keyBalance(account);
+      const amount=Math.min(remaining,balance);
+      if(amount>0&&this.transfer(account,'council',amount,'household '+category).ok){
+        remaining-=amount;paid+=amount;
+      }
+    }
+    this[field]=remaining;
+    this.addRevenue(category,paid);
+    if(remaining>0)this.daily.unpaidBills+=remaining;
   };
-  // Book only actual income; unpaid balances remain explicitly owed.
-  const beforeRent=this.playerRentArrears, beforeUtilities=this.playerUtilityArrears;
   settle(ECONOMIC_RATES.householdRent,'playerRentArrears','rent');
   settle(ECONOMIC_RATES.householdPower,'playerUtilityArrears','utilities');
-  // Fix receipt amounts if arrears from previous days are recovered.
-  const rentPaid=ECONOMIC_RATES.householdRent+beforeRent-this.playerRentArrears;
-  const utilityPaid=ECONOMIC_RATES.householdPower+beforeUtilities-this.playerUtilityArrears;
-  this.daily.rent-=ECONOMIC_RATES.householdRent;
-  this.lifetime.rent-=ECONOMIC_RATES.householdRent;
-  this.daily.utilities-=ECONOMIC_RATES.householdPower;
-  this.lifetime.utilities-=ECONOMIC_RATES.householdPower;
-  this.daily.rent+=rentPaid;this.lifetime.rent+=rentPaid;
-  this.daily.utilities+=utilityPaid;this.lifetime.utilities+=utilityPaid;
   this.playerEnergy=Math.max(0,this.playerEnergy-17);
   if(this.playerEnergy<30)this.life.log('Your energy is low. Eat food you have bought, or visit the shop.');
  }
+
  chargeBusiness(site){
   const p=this.life.place(site);
   if(!p||p.kind==='farmhouse'||['hall','school','clinic','post','depot','square'].includes(site))return;
@@ -213,7 +205,7 @@ export class TownFinance {
    this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,unpaidBills:0,interest:0};
    this.chargeHousehold();
    this.chargeNpcHouseholds();
-   for(const p of this.life.places.values())this.chargeBusiness(p.id);
+   for(const p of this.life.places.values()){p.dailyExpenses=0;this.chargeBusiness(p.id);}
    this.accrueLoan();
   }
   this.lastClosedDay=this.life.day;
