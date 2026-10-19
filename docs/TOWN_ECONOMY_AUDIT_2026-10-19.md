@@ -84,3 +84,15 @@ The word "Bank" had appeared in earlier proposed civic/town plans and branches, 
 8. Regression tests verify invariants and use genuine browser gameplay before production merge.
 
 **Recommendation:** Stage 1 solves the critical infinite-player-money problem. Stage 2 should be an actual audited town-wide double-entry ledger, operating costs and replenished municipal funding, followed by fuller banking and household financial lives. A truly economically realistic town cannot rely only on shop tills and job buttons.
+
+
+## Production deployment and test evidence (19 October)
+- PR #1 merged as commit `74db678e8a1bd522e2ba17549b9778a57d8ae8ae`.
+- GitHub Actions Town Economy Regression passed in feature branch and on merged main; economy test has 60 executable assertions covering transfers, work-task spacing and save/restore.
+- GitHub Pages deployment passed for the merged build.
+- Actual mobile-sized browser test: new player began with $60 cash, $100 everyday, $40 savings; buying $5 Bakery bread reduced the everyday account to $95 and total wealth from $200 to $195.
+- Actual mobile-sized browser bank test: at Town Hall, depositing $10 changed cash $60→$50 and everyday $100→$110; withdrawing $5 changed them to $55 and $105, and total wealth stayed $200.
+- Actual browser insufficient-funds test: transferred $100 from everyday to savings then tried a $5 card purchase; purchase failed, shop bread remained eight units, card balance remained zero and total player wealth remained $200.
+- Actual browser work test: Bakery offered a 35-town-minute/$24 assistant shift, player clocked in, visited the physical handwashing station, and recorded the first duty. No immediate wage payout; town speed remained 1×.
+- Actual browser station sweep: all six workplaces had three reachable duties each; Hall banker and Bakery checkout were accessible.
+- **Not yet verified end-to-end in a timed browser session:** collecting the final wage after completing an entire 35–45 town minute shift at 1×; the isolated wage and task accounting tests passed. No full multi-day economic stability test or Android hardware playtest.
