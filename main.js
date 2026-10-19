@@ -654,6 +654,12 @@ async function start() {
         const who = nearThing?.person && inside.people?.find((p) => p.key === nearThing.key);
         if (nearThing) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.label}${who ? ` · ${who.activity}` : ''}`;
         if (input.consume('use')) use();
+        // Production oven windows glow only while this supervised bakery
+        // batch is baking. Other houses and shops retain their own animations.
+        if(inside?.place?.id==='bakery'){
+          if(inside.place.supervisedBatch?.phase==='baking')active.add('bakery:oven-lights');
+          else active.delete('bakery:oven-lights');
+        }
         animate(inside.dynamics, t, active);
         for (const p of inside.people || []) p.update(dt, t, player, p.plan);
         if (cardTimer > 0 && (cardTimer -= dt) <= 0) $('card').hidden = true;
