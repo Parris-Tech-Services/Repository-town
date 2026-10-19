@@ -6,11 +6,12 @@ import {readFileSync} from 'node:fs';
 const src=p=>readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const stripped=x=>x.replace(/^import .*?;\s*$/gm,'').replace(/^export /gm,'');
 const {TownMoney,JOB_BOARD}=new Function(stripped(src('world/money.js'))+'\nreturn {TownMoney,JOB_BOARD};')();
-const {TownLife}=new Function('TownMoney',stripped(src('world/life.js'))+'\nreturn {TownLife};')(TownMoney);
+const {TownFinance}=new Function(stripped(src('world/finance.js'))+'\nreturn {TownFinance};')();
+const {TownLife}=new Function('TownMoney','TownFinance',stripped(src('world/life.js'))+'\nreturn {TownLife};')(TownMoney,TownFinance);
 const homes=Array.from({length:188},(_,i)=>({coordinate:String.fromCharCode(65+i%26)+(1+Math.floor(i/26)),
  name:'Repo '+i,door:{x:(i%26)*26,z:Math.floor(i/26)*46}}));
 const town=new TownLife({homes}),m=town.money;
-const sum=()=>town.treasury+m.total+town.villagers.reduce((total,v)=>total+v.wallet,0)+
+const sum=()=>town.treasury+town.finance.federalTreasury+town.finance.stateTreasury+m.total+town.villagers.reduce((total,v)=>total+v.wallet,0)+
  [...town.places.values()].reduce((total,p)=>total+(p.operating||0)+(p.till||0),0);
 const initial=sum();
 assert.deepEqual([m.cash,m.checking,m.savings,m.total,m.bankVault],[60,100,40,200,140]);
@@ -47,7 +48,7 @@ assert.equal(store.till,till+5);assert.equal(sum(),initial);
 const worker=town.villagers.find(v=>v.work==='bakery'),bakery=town.place('bakery');
 const workerBefore=worker.wallet,payPool=bakery.till+bakery.operating;
 town.pay(worker);
-assert.equal(worker.wallet-workerBefore,45);
+assert.equal(worker.wallet-workerBefore,41); // 10% PAYG floor($4)
 assert.equal(payPool-bakery.till-bakery.operating,45);
 assert.equal(sum(),initial);
 // A paid shift requires supervision, location and actual work duration.
@@ -65,7 +66,7 @@ assert.equal(m.performTask(town,'bakery','prep-bench').ok,false,'Work duties req
 town.minute+=5;assert(m.performTask(town,'bakery','prep-bench').ok);
 town.minute+=5;assert(m.performTask(town,'bakery','cooling').ok);
 const current=m.checking,shift=m.finishJob(town,'bakery');
-assert(shift.ok);assert.equal(m.checking,current+24);
+assert(shift.ok);assert.equal(m.checking,current+22); // gross $24 less $2 PAYG
 assert.equal(m.finishJob(town,'bakery').ok,false);
 assert.equal(m.startJob(town,'bakery-assistant','bakery').ok,false);
 assert.equal(sum(),initial);

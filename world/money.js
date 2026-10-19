@@ -51,6 +51,9 @@ export class TownMoney {
    this.savings-=amount;this.checking+=amount;
   }else return {ok:false,message:'Unknown bank transaction.'};
   this.log(day,'bank',action+' $'+amount,0);
+  const movement={deposit:['player.cash','player.checking'],withdraw:['player.checking','player.cash'],
+    save:['player.checking','player.savings'],unsave:['player.savings','player.checking']}[action];
+  if(movement)this.finance?.record(movement[0],movement[1],amount,'bank '+action);
   return {ok:true,message:{
    deposit:'Deposited',withdraw:'Withdrew',save:'Moved to savings',unsave:'Moved to everyday account'
   }[action]+' $'+amount+'.'};
@@ -70,6 +73,8 @@ export class TownMoney {
   this.playerBag[item]=(this.playerBag[item]||0)+1;
   this.spent+=cost;
   this.log(day,'purchase',item+' at '+business.name+' ('+this.payment+')',-cost);
+  this.finance?.record(this.payment==='cash'?'player.cash':'player.checking',
+    this.payment==='cash'?'register:'+business.id:'business:'+business.id,cost,'retail '+item);
   return {ok:true,message:'Paid $'+cost+' by '+(this.payment==='cash'?'cash':'card')+'.'};
  }
  // Shops keep register cash and operating capital distinct. Paying invoices
@@ -101,6 +106,7 @@ export class TownMoney {
   if(!job||!p)return {ok:false,message:'That job is not available.'};
   if(atSite!==job.site)return {ok:false,message:'Apply at the actual workplace.'};
   if(this.current(life.day))return {ok:false,message:'Finish your current shift before applying again.'};
+  if(life.finance?.playerEnergy<25)return {ok:false,message:'You need a proper meal and some energy before starting physical work.'};
   if(this.completedJobs[life.day+':'+id])return {ok:false,message:'You have already worked this job today.'};
   if(this.workedToday(life.day)>=2)return {ok:false,message:'You have already completed two shifts today. Rest until tomorrow.'};
   if(!life.open(p))return {ok:false,message:'The workplace is currently closed.'};
@@ -152,7 +158,7 @@ export class TownMoney {
   if(!work||atSite!==work.site)return {ok:false,message:'Return to your workplace to clock out.'};
   if(task.worked+0.001<task.required)return {ok:false,message:'You have worked '+Math.floor(task.worked)+' of '+task.required+' town minutes.'};
   if((task.doneTasks||[]).length<3)return {ok:false,message:'Complete the remaining workplace duties before clocking out ('+(task.doneTasks||[]).length+'/3 done).'};
-  const p=life.place(work.site);
+  const p=life.place(work.site),beforeTill=p.till||0,beforeOperating=p.operating||0;
   if(life.isPublicPayroll(work.site)){
    if(life.treasury<work.pay)return {ok:false,message:'Council payroll is temporarily short of funds.'};
    life.treasury-=work.pay;
@@ -160,11 +166,23 @@ export class TownMoney {
    return {ok:false,message:'The employer cannot fund the shift. It remains payable.'};
   }
   this.creditPay(life.day,work.pay,work.name+' wages');
+  if(life.isPublicPayroll(work.site)){
+    life.finance?.record('council','player.checking',work.pay,'public wages: '+work.name);
+    life.finance.daily.councilSpending+=work.pay;
+    life.finance.lifetime.councilSpending+=work.pay;
+  }else{
+    const fromRegister=beforeTill-(p.till||0),fromOperating=beforeOperating-(p.operating||0);
+    if(fromRegister>0)life.finance?.record('register:'+p.id,'player.checking',fromRegister,'earned '+work.name);
+    if(fromOperating>0)life.finance?.record('business:'+p.id,'player.checking',fromOperating,'earned '+work.name);
+    p.payrollPaid=(p.payrollPaid||0)+work.pay;
+  }
+  const tax=life.finance?.taxPlayerWage(work.pay)||0;
+  if(tax)life.log('PAYG income tax withheld from player wages: $'+tax+'.');
   this.completedJobs[life.day+':'+work.id]=work.pay;
   this.activeJob=null;
   if(life.stats)life.stats.playerWages=(life.stats.playerWages||0)+work.pay;
   life.log('The player completed a shift as '+work.name+' and was paid $'+work.pay+' from '+p.name+'.');
-  return {ok:true,message:'Shift finished. $'+work.pay+' in wages was deposited into your everyday account.'};
+  return {ok:true,message:'Shift finished. Gross pay $'+work.pay+', tax $'+tax+', net pay $'+(work.pay-tax)+' deposited into your everyday account.'};
  }
  snapshot(){return{
   version:1,cash:this.cash,checking:this.checking,savings:this.savings,bankVault:this.bankVault,
