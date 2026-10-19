@@ -34,7 +34,7 @@ assert.equal(m.bank('deposit',1.5,town.day).ok,false);
 m.checking=83;m.bankVault=123;
 assert.equal(sum(),initial); // original balance after a $5 bread, $5 cafe and $7 pie
 assert(m.bank('deposit',20,town.day).ok);
-assert.equal(m.cash,40);assert.equal(m.checking,105);
+assert.equal(m.cash,40);assert.equal(m.checking,103);
 assert(m.bank('save',40,town.day).ok);assert.equal(m.savings,80);
 assert(m.bank('unsave',10,town.day).ok);assert(m.bank('withdraw',10,town.day).ok);
 assert.equal(sum(),initial);assert.equal(m.bankVault,m.checking+m.savings);
