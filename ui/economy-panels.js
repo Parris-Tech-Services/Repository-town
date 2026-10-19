@@ -182,9 +182,15 @@ export function townBudgetPanel(life){
  ' · <b>Council cash:</b> '+dollar(life.treasury)+
  ' · <b>Bank capital:</b> '+dollar(a.bankCapital)+
  ' · <b>Deposits backed:</b> '+(a.depositsBacked?'Yes':'NO — reconciliation failure')+'</p>'+
- '<h3>Today’s local-government receipts</h3>'+
+ '<h3>Government funding by tier</h3>'+
+ '<p><b>Commonwealth:</b> '+dollar(a.federalTreasury)+' · <b>NSW:</b> '+dollar(a.stateTreasury)+
+ ' · <b>Local council:</b> '+dollar(life.treasury)+'</p>'+
+ '<p><b>PAYG income tax (Commonwealth):</b> '+dollar(f.daily.tax)+
+ ' · <b>NSW health/school wages:</b> '+dollar(f.daily.stateSpending)+
+ ' · <b>Council wages:</b> '+dollar(f.daily.councilSpending)+'</p>'+
+ '<h3>Local council receipts</h3>'+
  '<p>Rates: '+dollar(f.daily.rates)+' · Utilities: '+dollar(f.daily.utilities)+
- ' · Housing rent: '+dollar(f.daily.rent)+' · Income tax: '+dollar(f.daily.tax)+'</p>'+
+ ' · Housing rent: '+dollar(f.daily.rent)+' · Government grants: '+dollar(f.daily.grants)+'</p>'+
  '<p>Unpaid invoices/arrears outstanding: '+dollar(f.daily.unpaidBills)+
  ' · Player rent owed: '+dollar(f.playerRentArrears)+
  ' · Player power owed: '+dollar(f.playerUtilityArrears)+'</p>'+
@@ -194,6 +200,6 @@ export function townBudgetPanel(life){
  dollar(x.grossRevenue)+'</td><td>'+dollar(x.expenses)+'</td><td>'+dollar(x.profit)+'</td><td>'+dollar(x.unpaid)+'</td></tr>').join('')+'</table>'+
  '<h3>Double-entry transfers (new economic systems)</h3>'+
  '<table class="ledger"><tr><th>Day</th><th>Memo</th><th>From → To</th><th>Amount</th></tr>'+rows+'</table>'+
- '<p class="dim">The journal covers new and most legacy retail, payroll, wholesale, loan, tax and household flows. The business result includes recorded revenue, wages, wholesale purchases and utilities/rates but excludes unsold opening inventory valuation, depreciation and realistic production overheads.</p>',
+ '<p class="dim">The journal covers retail, payroll, wholesale, loan, Commonwealth PAYG tax and household flows. Business results include recorded revenue, wages, wholesale purchases, utilities and rates, but exclude opening-inventory valuation, depreciation and real production overheads.</p>',
  actions:[{label:'💳 My wallet',run:()=>walletPanel(life)}]};
 }
