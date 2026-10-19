@@ -96,4 +96,21 @@ const old={...snap};delete old.finance;
 const legacy=new TownLife({homes});legacy.restore(old);
 assert.equal(legacy.finance.bankCapital,5000);
 assert.equal(legacy.finance.loan,null);
+const oldDay={...old,day:50};
+const upgrade=new TownLife({homes});upgrade.restore(oldDay);
+assert.equal(upgrade.finance.lastClosedDay,50,'Migrated old saves must not be charged 49 earlier days');
+upgrade.day=51;upgrade.finance.dailyClose();
+assert.equal(upgrade.finance.playerRentArrears,0);
+assert.equal(upgrade.finance.playerUtilityArrears,0);
+assert.equal(upgrade.money.total,oldDay.money.cash+oldDay.money.checking+oldDay.money.savings-10);
+// Grants transfer money from higher-level government accounts into council.
+const grantsTown=new TownLife({homes}),grantFinance=grantsTown.finance;
+grantsTown.day=7;grantFinance.lastClosedDay=6;
+const fBefore=grantFinance.federalTreasury,sBefore=grantFinance.stateTreasury;
+const gBefore=grantFinance.moneySupply();grantFinance.dailyClose();
+assert.equal(grantFinance.federalTreasury,fBefore-350);
+assert.equal(grantFinance.stateTreasury,sBefore-200);
+assert.equal(grantFinance.daily.grants,550);
+assert.equal(grantFinance.moneySupply(),gBefore);
+
 console.log('PASS: financial conservation incl Commonwealth/NSW/council, taxes, credit, bills, purchases, payroll and saves');
