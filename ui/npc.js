@@ -7,11 +7,7 @@ import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
 import { recordPlayerMessage, recordTownAction, socialContext, socialGossip } from './social.js';
 
 const LEGACY_KEY_STORE = 'repository-town.groq-keys';
-const CODE_STORE = 'town-npc-code';
-// GitHub Pages sends only the private PIN to a Cloudflare bridge. It forwards
-// to Vercel, where the Groq key stays server-side and the PIN is validated.
-const PAGES_HOST = typeof location !== 'undefined' && /(^|\.)github\.io$/i.test(location.hostname);
-const NPC_API = PAGES_HOST ? 'https://repository-town-ai-bridge.parris-neathaustralia.workers.dev/api/npc-chat' : '/api/npc-chat';
+const NPC_API = 'https://repository-town-no-code-ai.parris-neathaustralia.workers.dev/api/npc-chat';
 const CHAT_STORE = 'repository-town.npc-chats';
 const ERRAND_STORE = 'repository-town.errands.v1';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -22,23 +18,7 @@ try { localStorage.removeItem(LEGACY_KEY_STORE); } catch { /* private mode */ }
 const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const write = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
 
-export function getAccessCode() {
-  try { return (sessionStorage.getItem(CODE_STORE) || '').trim(); } catch { return ''; }
-}
-export function setAccessCode(code) {
-  const clean = String(code ?? '').trim();
-  try {
-    if (clean) sessionStorage.setItem(CODE_STORE, clean);
-    else sessionStorage.removeItem(CODE_STORE);
-  } catch { /* private mode */ }
-  const pinInput = typeof document !== 'undefined' ? document.getElementById('npc-code') : null;
-  if (pinInput) pinInput.value = clean;
-  return clean;
-}
-
 async function askResidentProxy(id, house, name, f, role, history) {
-  const accessCode = getAccessCode();
-  if (!accessCode) throw Object.assign(new Error('no access code'), { code: 'nocode' });
   const personality = role === 'villager' ? villagerProfile(name) : null;
   const resident = {
     name,
@@ -66,7 +46,7 @@ async function askResidentProxy(id, house, name, f, role, history) {
     res = await fetch(NPC_API, {
       method: 'POST',
       credentials: 'omit',
-      headers: { 'Content-Type': 'application/json', 'x-npc-code': accessCode },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         npcId: id,
         resident,
@@ -78,10 +58,6 @@ async function askResidentProxy(id, house, name, f, role, history) {
   }
   const payload = await res.json().catch(() => ({}));
   if (!res.ok) {
-    if (res.status === 401) {
-      setAccessCode('');
-      throw Object.assign(new Error(payload.error || 'unauthorized'), { code: 'badcode' });
-    }
     throw Object.assign(new Error(payload.error || `HTTP ${res.status}`), { code: res.status === 429 ? 'busy' : 'offline' });
   }
   const answer = String(payload.reply || '').trim();
@@ -289,14 +265,9 @@ export function npcBehaviour(x, ctx) {
       });
       panel.classList.remove('chat-typing');
       const showBrain = () => {
-        const hasCode = Boolean(getAccessCode());
-        brain.innerHTML = hasCode
-          ? `Live AI enabled via server proxy (access code set for this tab). <a href="#" class="chat-forget">Clear access code</a>`
-          : `Offline replies. Enter playtest access code for live AI: <input class="chat-key" type="password" placeholder="Access code…" aria-label="Playtest access code"> <button type="button" class="chat-save">Save</button>`;
-        brain.querySelector('.chat-save')?.addEventListener('click', () => { setAccessCode(brain.querySelector('.chat-key').value); showBrain(); });
-        brain.querySelector('.chat-forget')?.addEventListener('click', (e) => { e.preventDefault(); setAccessCode(''); showBrain(); });
+        brain.textContent='Live AI via Cloudflare, with offline dialogue if unavailable.';
       };
-      showBrain();
+            showBrain();
       render(log, history, name);
       let facts = null;
       for (const chip of root.querySelectorAll('.chat-chip')) {
@@ -320,8 +291,7 @@ export function npcBehaviour(x, ctx) {
           reply = await askResidentProxy(id, house, name, facts, x.act.role, history);
         } catch (err) {
           reply = scripted(house, name, facts, text, x.act.role);
-          if (err.code === 'badcode') { showBrain(); reply += ' (Incorrect access code, so a simple reply.)'; }
-          else if (err.code === 'offline') reply += ' (Offline, so a simple reply.)';
+          if (err.code === 'offline') reply += ' (Offline, so a simple reply.)';
           else if (err.code === 'busy') reply += ' (AI service is busy right now, so a simple reply.)';
         }
         history.push({ role: 'assistant', content: reply });
