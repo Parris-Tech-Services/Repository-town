@@ -515,7 +515,7 @@ export class TownLife {
     const ok = uses.some((g) => (p.stock[g] || 0) > 0);
     if (!ok || v.wallet < price) { v.activity = `found the ${p.name} out of food`; this.log(`The ${p.name} ran out of food and had to turn ${v.name} away.`); return; }
     for (const g of uses) if ((p.stock[g] || 0) > 0) { p.stock[g]--; break; }
-    v.wallet -= price; p.till += price; this.stats.mealsOut++;
+    v.wallet -= price; p.till += price; p.grossSales=(p.grossSales||0)+price; this.stats.mealsOut++;
     this.eat(v, dish); v.activity = `${v.step.activity} — ${dish}`;
   }
 
@@ -523,7 +523,7 @@ export class TownLife {
   snack(v, shopId, good) {
     const shop = this.place(shopId), src = shopId === 'bakery' ? shop.out : shop.stock, price = GOODS[good].price;
     if (!this.open(shop) || !(src[good] > 0) || v.wallet < price) { v.memory = `the ${shop.name} had no ${GOODS[good].name} left`; v.activity = `found the ${shop.name} out of ${GOODS[good].name}`; return; }
-    src[good]--; v.wallet -= price; shop.till += price; this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
+    src[good]--; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
     this.eat(v, good === 'pie' ? 'a meat pie from the Bakery' : 'a fresh bread roll');
   }
 
@@ -535,7 +535,7 @@ export class TownLife {
     for (const g of items) {
       const n = g === 'veg' || g === 'bread' ? 2 : 1;
       const have = src[g] || 0, price = GOODS[g].price * n;
-      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; shop.till += price; this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
+      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
       else missing.push(GOODS[g].name);
     }
     if (Object.keys(bag).length) v.carrying = bag;
@@ -543,7 +543,18 @@ export class TownLife {
   }
 
   // Workers are paid at the end of each shift; the money comes back through the shops.
-  pay(v) { v.paidDay = this.day; v.wallet += WAGES[v.job] || 45; }
+  pay(v){
+    const wage=WAGES[v.job]||45;
+    v.paidDay=this.day;
+    if(this.payWageSource(v.work,wage)){
+      v.wallet+=wage;this.stats.wagesPaid+=wage;
+      this.log(v.name+' was paid $'+wage+' from '+(this.isPublicPayroll(v.work)?'council':this.place(v.work)?.name)+'.');
+    }else{
+      v.wageArrears=(v.wageArrears||0)+wage;
+      this.stats.wagesOwed+=wage;
+      this.log(v.name+' is owed $'+wage+' by '+(this.place(v.work)?.name||'the town')+'.');
+    }
+  }
 
   // ── For chat, the guide and the ledger ──
   describe(v) {
@@ -554,18 +565,21 @@ export class TownLife {
   }
   news(n = 6) { return this.events.slice(0, n); }
   ledger() {
-    const shops = [...this.places.values()].filter((p) => p.target).map((p) => ({ name: p.name, stock: p.stock, till: p.till, open: this.open(p) }));
+    const shops = [...this.places.values()].filter(p=>p.target).map(p=>({id:p.id,name:p.name,stock:p.stock,till:p.till,operating:p.operating,grossSales:p.grossSales,open:this.open(p)}));
     const farms = [...this.places.values()].filter((p) => p.kind === 'farm').map((p) => ({ name: p.name, makes: GOODS[p.makes].name, waiting: p.out[p.makes] || 0, growth: p.growth }));
     return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
+      finance:{treasury:this.treasury,player:this.money.snapshot(),wagesPaid:this.stats.wagesPaid,wagesOwed:this.stats.wagesOwed,wholesale:this.stats.wholesale},
       population: this.villagers.length, atWork: this.villagers.filter((v) => v.step?.kind === 'work').length, asleep: this.villagers.filter((v) => v.step?.kind === 'sleep').length };
   }
 
   // Saves just what matters to resume tomorrow where the town left off.
-  snapshot() { return { day: this.day, minute: this.minute, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth, p.supervisedBatch||null]), villagers: this.villagers.map((v) => [v.id, v.pantry, v.wallet, v.lastMeal, v.meals]) }; }
+  snapshot() { return {day:this.day,minute:this.minute,treasury:this.treasury,money:this.money.snapshot(),places:[...this.places.values()].map(p=>[p.id,p.stock,p.out,p.till,p.growth,p.supervisedBatch||null,p.operating,p.grossSales]),villagers:this.villagers.map(v=>[v.id,v.pantry,v.wallet,v.lastMeal,v.meals,v.paidDay||null,v.wageArrears||0])}; }
   restore(s) {
     if (!s || typeof s !== 'object') return;
-    this.day = s.day || 1; this.minute = s.minute || 7 * 60;
-    for (const [id, stock, out, till, growth, supervisedBatch] of s.places || []) { const p = this.place(id); if (p) Object.assign(p, { stock, out, till, growth: growth ?? p.growth, supervisedBatch: supervisedBatch||null }); }
-    for (const [id, pantry, wallet, lastMeal, meals] of s.villagers || []) { const v = this.villagers[id]; if (v) Object.assign(v, { pantry, wallet, lastMeal, meals: meals || [] }); }
+    this.day=s.day||1;this.minute=s.minute||7*60;
+    if(Number.isSafeInteger(s.treasury)&&s.treasury>=0)this.treasury=s.treasury;
+    this.money.restore(s.money);
+    for(const [id,stock,out,till,growth,supervisedBatch,operating,grossSales]of s.places||[]){const p=this.place(id);if(p)Object.assign(p,{stock,out,till,growth:growth??p.growth,supervisedBatch:supervisedBatch||null,operating:Number.isSafeInteger(operating)&&operating>=0?operating:p.operating,grossSales:Number.isSafeInteger(grossSales)&&grossSales>=0?grossSales:0});}
+    for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0});}
   }
 }
