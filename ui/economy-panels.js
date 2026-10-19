@@ -80,7 +80,8 @@ export function jobPanel(life,site){
   ' · <b>Supervisor(s) present:</b> '+esc(working.map(w=>w.name).join(', ')||'none')+'</p>';
  if(active)body+='<p><b>Current shift:</b> '+esc(m.jobById(active.id)?.name||active.id)+
   ' · '+Math.floor(active.worked)+' / '+active.required+' town minutes worked · <b>Pay:</b> '+dollar(active.pay)+
-  '. Time counts only while physically working at the right location.</p>';
+  '. Time counts only while physically working at the right location.</p>'+
+  '<p><b>Duties:</b> '+(m.jobById(active.id)?.tasks||[]).map(k=>(active.doneTasks||[]).includes(k)?'✅ '+esc(k.replace(/-/g,' ')):'☐ '+esc(k.replace(/-/g,' '))).join(' · ')+'</p>';
  else body+='<p>No active shift. Choose work below. Pay is limited by the employer’s actual cash and operating account.</p>';
  body+='<p>Shifts completed today: '+m.workedToday(life.day)+' / 2. Unfinished shifts can be resumed today without restarting the timer.</p>';
  const actions=[];
@@ -95,4 +96,27 @@ export function jobPanel(life,site){
   }});
  actions.push({label:'💳 Check my wallet',run:()=>walletPanel(life)});
  return {title:'💼 Work at '+p.name,body,actions,wide:true};
+}
+
+
+// Work stations physically present in the 3D world. These require clock-in,
+// a valid supervisor, and unique tasks at least five town minutes apart.
+export function workTaskPanel(life,site,taskKey){
+ const m=life.money,task=m.current(life.day),job=task?m.jobById(task.id):null;
+ const eligible=!!(job&&job.site===site&&job.tasks.includes(taskKey));
+ const done=!!task?.doneTasks?.includes(taskKey);
+ return {
+  title:'🧰 '+esc(taskKey.replace(/-/g,' ')),
+  body:'<p>Workplace: '+esc(life.place(site)?.name||site)+
+    '</p><p>'+(eligible?(done?'This duty has been completed.':
+    'Perform this real work duty to progress towards your pay. Each distinct task counts once and must be separated by at least five town minutes.'):
+    'Clock into a paid shift here first. You must perform the assigned workplace duties as well as complete the shift time.')+'</p>',
+  actions:[
+    ...(eligible&&!done?[{label:'Complete '+taskKey.replace(/-/g,' '),run:()=>{
+      const result=m.performTask(life,site,taskKey);
+      const p=jobPanel(life,site);p.body='<p><b>'+esc(result.message)+'</b></p>'+p.body;return p;
+    }}]:[]),
+    {label:'💼 Work shift progress',run:()=>jobPanel(life,site)}
+  ]
+ };
 }
