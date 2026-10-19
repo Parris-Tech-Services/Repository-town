@@ -4,7 +4,7 @@ import { Input } from './engine/input.js';
 import { Player } from './engine/player.js';
 import { loadSave, writeSave, clearSave } from './engine/save.js';
 import { buildTown, streetSigns, lotPosition, LOT_Z } from './world/town.js';
-import { buildInterior } from './world/interior.js';
+import { buildInterior, labelVisible } from './world/interior.js';
 import { animate, windowMaterial, lampMaterial } from './world/builder.js';
 import { makeLabel, disposeLabel } from './ui/labels.js';
 import { runInteraction, esc } from './ui/interactions.js';
@@ -544,8 +544,9 @@ async function start() {
         animate(inside.dynamics, t, active);
         for (const p of inside.people || []) p.update(dt, t, player, p.plan);
         if (cardTimer > 0 && (cardTimer -= dt) <= 0) $('card').hidden = true;
-        // Labels hide when the player is right on top of them so they never fill the screen.
-        for (const s of inside.group.children) if (s.isSprite) s.visible = Math.hypot(s.position.x - player.pos.x, s.position.z - player.pos.z) > (s.userData.labelKind === 'room' ? 2.6 : 1.3);
+        // Labels hide when the player is right on top of them so they never fill the screen,
+        // and when a wall or closed door stands between them and the camera.
+        for (const s of inside.group.children) if (s.isSprite) s.visible = Math.hypot(s.position.x - player.pos.x, s.position.z - player.pos.z) > (s.userData.labelKind === 'room' ? 2.6 : 1.3) && labelVisible(camera.position, s.position, inside.sight);
       }
     }
     if (mode === 'town') input.consume('use');
