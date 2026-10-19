@@ -13,11 +13,13 @@ export class TownFinance {
  constructor(life){
   this.life=life;
   this.bankCapital=5000; // pre-seeded cooperative equity; not conjured on each loan
+  this.federalTreasury=25000; // Commonwealth tax / grant budget
+  this.stateTreasury=15000; // NSW public health and education wages
   this.playerRentArrears=0;this.playerUtilityArrears=0;
   this.playerEnergy=75;this.playerMeals=0;
   this.loan=null;this.lastClosedDay=0;
   this.entries=[];this.sequence=0;
-  this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,unpaidBills:0,interest:0};
+  this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,stateSpending:0,grants:0,unpaidBills:0,interest:0};
   this.lifetime={...this.daily};
  }
  keyBalance(key){
@@ -26,6 +28,8 @@ export class TownFinance {
   if(key==='player.cash')return m.cash;
   if(key==='player.savings')return m.savings;
   if(key==='council')return l.treasury;
+  if(key==='federal')return this.federalTreasury;
+  if(key==='state')return this.stateTreasury;
   if(key==='bank.capital')return this.bankCapital;
   if(key.startsWith('business:')){
    const p=l.place(key.slice(9));return p?p.operating:undefined;
@@ -45,6 +49,8 @@ export class TownFinance {
   if(key==='player.cash'){m.cash=value;return}
   if(key==='player.savings'){m.savings=value;m.bankVault=m.checking+m.savings;return}
   if(key==='council'){l.treasury=value;return}
+  if(key==='federal'){this.federalTreasury=value;return}
+  if(key==='state'){this.stateTreasury=value;return}
   if(key==='bank.capital'){this.bankCapital=value;return}
   if(key.startsWith('business:')){l.place(key.slice(9)).operating=value;return}
   if(key.startsWith('register:')){l.place(key.slice(9)).till=value;return}
@@ -84,14 +90,14 @@ export class TownFinance {
  taxPlayerWage(gross){
   const amount=this.incomeTax(gross);
   if(!amount)return 0;
-  if(this.transfer('player.checking','council',amount,'income tax on player wages').ok){
+  if(this.transfer('player.checking','federal',amount,'Commonwealth PAYG on player wages').ok){
    this.addRevenue('tax',amount);return amount;
   }return 0;
  }
  taxNpcWage(worker,gross){
   const amount=this.incomeTax(gross);
   if(!amount)return 0;
-  if(this.transfer('npc:'+worker.id,'council',amount,'PAYG withholding '+worker.name).ok){
+  if(this.transfer('npc:'+worker.id,'federal',amount,'Commonwealth PAYG '+worker.name).ok){
    this.addRevenue('tax',amount);return amount;
   }return 0;
  }
@@ -202,23 +208,31 @@ export class TownFinance {
   if(this.lastClosedDay>=this.life.day)return;
   const start=Math.max(this.lastClosedDay+1,2); // Day 1 has starting funds, no rent before first night.
   for(let day=start;day<=this.life.day;day++){
-   this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,unpaidBills:0,interest:0};
+   this.daily={rates:0,utilities:0,rent:0,tax:0,councilSpending:0,stateSpending:0,grants:0,unpaidBills:0,interest:0};
    this.chargeHousehold();
    this.chargeNpcHouseholds();
    for(const p of this.life.places.values()){p.dailyExpenses=0;this.chargeBusiness(p.id);}
+   // Weekly intergovernmental transfers: federal/state grants fund council
+   // services from pre-existing public money, not automatic minting.
+   if(day%7===0){
+     const federal=Math.min(350,this.federalTreasury);
+     if(federal&&this.transfer('federal','council',federal,'Commonwealth local services grant').ok)this.addRevenue('grants',federal);
+     const state=Math.min(200,this.stateTreasury);
+     if(state&&this.transfer('state','council',state,'NSW local infrastructure grant').ok)this.addRevenue('grants',state);
+   }
    this.accrueLoan();
   }
   this.lastClosedDay=this.life.day;
  }
  moneySupply(){
   const l=this.life;
-  return l.money.total + l.treasury + this.bankCapital+
+  return l.money.total + l.treasury + this.federalTreasury+this.stateTreasury+this.bankCapital+
     l.villagers.reduce((n,v)=>n+clamp(v.wallet),0)+
     [...l.places.values()].reduce((n,p)=>n+clamp(p.operating)+clamp(p.till),0);
  }
  audit(){
   const m=this.life.money;
-  return {moneySupply:this.moneySupply(),bankCapital:this.bankCapital,
+  return {moneySupply:this.moneySupply(),bankCapital:this.bankCapital,federalTreasury:this.federalTreasury,stateTreasury:this.stateTreasury,
    depositLiability:m.checking+m.savings,bankVault:m.bankVault,
    depositsBacked:m.bankVault===m.checking+m.savings,
    journalBalanced:this.entries.every(e=>e.amount>0&&e.debit!==e.credit),
@@ -227,13 +241,13 @@ export class TownFinance {
    energy:this.playerEnergy,day:this.lastClosedDay,daily:{...this.daily},
    currentEntries:this.entries.slice(0,30)};
  }
- snapshot(){return {version:2,bankCapital:this.bankCapital,playerRentArrears:this.playerRentArrears,
+ snapshot(){return {version:2,bankCapital:this.bankCapital,federalTreasury:this.federalTreasury,stateTreasury:this.stateTreasury,playerRentArrears:this.playerRentArrears,
   playerUtilityArrears:this.playerUtilityArrears,playerEnergy:this.playerEnergy,playerMeals:this.playerMeals,
   loan:this.loan?{...this.loan}:null,lastClosedDay:this.lastClosedDay,
   sequence:this.sequence,entries:this.entries.slice(0,220),daily:{...this.daily},lifetime:{...this.lifetime}}}
  restore(s){
   if(!s||s.version!==2)return;
-  for(const field of ['bankCapital','playerRentArrears','playerUtilityArrears','playerEnergy','playerMeals','lastClosedDay','sequence'])
+  for(const field of ['bankCapital','federalTreasury','stateTreasury','playerRentArrears','playerUtilityArrears','playerEnergy','playerMeals','lastClosedDay','sequence'])
    if(Number.isSafeInteger(s[field])&&s[field]>=0&&s[field]<=1e9)this[field]=s[field];
   this.playerEnergy=Math.min(100,this.playerEnergy);
   if(s.loan&&valid(s.loan.principal)&&Number.isSafeInteger(s.loan.interestCents)&&s.loan.interestCents>=0)
