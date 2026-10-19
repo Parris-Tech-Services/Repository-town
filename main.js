@@ -18,6 +18,7 @@ import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, 
 import { createTownLife } from './world/townlife.js';
 import { createAmbience } from './ui/ambience.js';
 import { placePanel, buy, ledgerPanel, guidePanel, relicsLeft, townContext } from './ui/townpanels.js';
+import { bakeryStationPanel } from './ui/bakery-panel.js';
 import { createExpedition } from './adventure/expedition.js';
 
 const $ = (id) => document.getElementById(id);
@@ -413,6 +414,10 @@ async function start() {
         return;
       }
       const thing = nearThing, request = ++interactionRequest, house = inside;
+      if(inside?.place?.id==='bakery'&&(thing.act?.do==='bakery-process'||thing.act?.do==='bakery-status')) {
+        openPanel(bakeryStationPanel(life,thing.act.stage),thing);
+        return;
+      }
       if(inside?.place&&thing.act?.do==='civic-ledger'){
         const p=inside.place;
         openPanel(p.id==='hall'?ledgerPanel(life):placePanel(life,p.id,(id,g)=>buy(life,id,g)),thing);
