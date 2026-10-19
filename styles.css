@@ -92,6 +92,16 @@ body.playing #hud, body.playing #touch, body.playing #minimap, body.playing #cro
 #panel .chat-input, #panel .chat-key { flex: 1; min-width: 0; font: inherit; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); background: #050a14; color: var(--ink); }
 #panel .chat-key { width: 12em; padding: 4px 8px; }
 #panel .chat-brain { margin-top: 8px; }
+
+/* Town life */
+#clock { font-size: 12px; font-weight: normal; opacity: .85; margin-left: 6px; white-space: nowrap; }
+.bar { display: inline-block; width: 120px; height: 10px; background: #0003; border-radius: 5px; vertical-align: middle; overflow: hidden; }
+.bar span { display: block; height: 100%; background: linear-gradient(90deg, #6aa83a, #e0c060); }
+.ok { color: #7fe08f; }
+table.ledger { border-collapse: collapse; width: 100%; font-size: 13px; }
+table.ledger th, table.ledger td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #ffffff1a; vertical-align: top; }
+ul.news { margin: 4px 0; padding-left: 18px; font-size: 13px; }
+#panel h3 { margin: 10px 0 4px; font-size: 14px; }
 #panel .chat-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 #panel .chat-chip { font-size: 12px; padding: 4px 9px; border-radius: 14px; background: #162940; border: 1px solid #4e6b8c; }
 #panel .chat-chip:hover { border-color: var(--accent); background: #213e5e; }

@@ -1,4 +1,4 @@
-// Lightweight, friendly low-poly residents. Geometry is procedural, so no image assets,
+// Named street characters (src/ui/npc-data.js): lightweight, friendly low-poly figures. Geometry is procedural, so no image assets,
 // CDN calls, texture downloads, or private repository data are needed.
 import * as THREE from 'three';
 import { NPCS } from '../ui/npc-data.js';
@@ -313,10 +313,11 @@ export function animateNPCs(list,time,playerPos,dt=1/60,talkingTo=null,collision
   }
 }
 
-// ── Townsfolk: villagers walking between houses, and each house's resident ──
+// ── Townsfolk: the simulated villagers' figures and each house's resident ──
 
-// People: house residents who wander their Repository Archive, and villagers who walk
-// the town between houses. Both stop and turn to face the player who comes to talk.
+// People: house residents who move about their house, and villagers whose days the
+// town simulation plans (src/world/life.js, drawn by townlife.js). Both stop and turn
+// to face the player who comes to talk.
 const SKIN = [0xe2b48c, 0xc68e63, 0x8d5a3b, 0xf1c9a5, 0xa8714a];
 const HAIR = [0x3b2a1e, 0x1d1d1d, 0x8a5a2b, 0xd8b26a, 0x6b3a2a, 0x9a9a9a];
 const mats = new Map();
@@ -351,6 +352,18 @@ export function makePerson(seed, shirt, trousers) {
   return { group: g, legs, arms, head };
 }
 
+// Swings limbs while walking and settles them when standing (shared by every figure).
+export function pose(p, dt, t, moving, faceForward = moving) {
+  const swing = moving ? Math.sin(t * 7 + p.phase) * 0.55 : 0;
+  const ease = (r, v) => r + (v - r) * Math.min(1, dt * 10);
+  p.legs[0].rotation.x = ease(p.legs[0].rotation.x, swing);
+  p.legs[1].rotation.x = ease(p.legs[1].rotation.x, -swing);
+  p.arms[0].rotation.x = ease(p.arms[0].rotation.x, -swing * 0.8);
+  p.arms[1].rotation.x = ease(p.arms[1].rotation.x, swing * 0.8);
+  if (faceForward) p.head.rotation.y = ease(p.head.rotation.y, 0);
+  else p.head.rotation.y = Math.sin(t * 0.7 + p.phase) * 0.5;
+}
+
 // Shared walking behaviour: follow waypoints, pause, look around; stop for the player.
 export class Walker {
   constructor(person, pos, { speed = 1.3, name } = {}) {
@@ -373,12 +386,10 @@ export class Walker {
       this.turnTo(Math.atan2(player.pos.x - this.pos.x, player.pos.z - this.pos.z), dt * 4);
     } else if (this.wait > 0) {
       this.wait -= dt;
-      // Idle: glance around now and then.
-      this.head.rotation.y = Math.sin(t * 0.7 + this.phase) * 0.5;
     } else if (this.path.length) {
       const target = this.path[0];
       const dx = target.x - this.pos.x, dz = target.z - this.pos.z, d = Math.hypot(dx, dz);
-      if (d < 0.15) { this.path.shift(); if (target.pause) this.wait = target.pause; }
+      if (d < 0.15) { this.path.shift(); if (target.room !== undefined) this.room = target.room; if (target.pause) this.wait = target.pause; }
       else {
         const step = Math.min(d, this.speed * dt);
         this.pos.x += (dx / d) * step; this.pos.z += (dz / d) * step;
@@ -390,14 +401,7 @@ export class Walker {
       this.path = planNext(this) || [];
       if (!this.path.length) this.wait = 2 + Math.random() * 4;
     }
-    // Limbs swing while walking and settle when standing.
-    const swing = moving ? Math.sin(t * 7 + this.phase) * 0.55 : 0;
-    const ease = (r, v) => r + (v - r) * Math.min(1, dt * 10);
-    this.legs[0].rotation.x = ease(this.legs[0].rotation.x, swing);
-    this.legs[1].rotation.x = ease(this.legs[1].rotation.x, -swing);
-    this.arms[0].rotation.x = ease(this.arms[0].rotation.x, -swing * 0.8);
-    this.arms[1].rotation.x = ease(this.arms[1].rotation.x, swing * 0.8);
-    if (moving || engaged) this.head.rotation.y = ease(this.head.rotation.y, 0);
+    pose(this, dt, t, moving, moving || engaged);
     this.group.position.set(this.pos.x, moving ? Math.abs(Math.sin(t * 7 + this.phase)) * 0.04 : 0, this.pos.z);
     this.group.rotation.y = this.heading;
   }
@@ -422,85 +426,70 @@ export function freeSpot(pos, world, r = 0.4) {
   return pos;
 }
 
-function clearLine(x0, z0, x1, z1, world, r = 0.35) {
-  const d = Math.hypot(x1 - x0, z1 - z0);
-  for (let s = 0.35; s <= d; s += 0.35) {
-    if (world.hits(x0 + (x1 - x0) * (s / d), z0 + (z1 - z0) * (s / d), r)) return false;
+// A clear straight line between two floor points (people do not walk through furniture).
+function clearLine(world, a, b) {
+  const d = Math.hypot(b.x - a.x, b.z - a.z);
+  for (let s = 0.4; s <= d; s += 0.4) if (world.hits(a.x + (b.x - a.x) * (s / d), a.z + (b.z - a.z) * (s / d), 0.35)) return false;
+  return !world.hits(b.x, b.z, 0.35);
+}
+// A way from `from` to `to` inside one room: straight, or via a free point that sees both.
+function reach(room, world, from, to) {
+  if (clearLine(world, from, to)) return [to];
+  for (let i = 0; i < 24; i++) {
+    const x = room.x0 + 0.8 + Math.random() * (room.x1 - room.x0 - 1.6), z = room.z0 + 0.8 + Math.random() * (room.z1 - room.z0 - 1.6), p = { x, z };
+    if (clearLine(world, from, p) && clearLine(world, p, to)) return [p, to];
   }
-  return !world.hits(x1, z1, r);
+  return null;
+}
+function freePoint(room, world, from, tries = 12) {
+  for (let i = 0; i < tries; i++) {
+    const x = room.x0 + 1.1 + Math.random() * (room.x1 - room.x0 - 2.2), z = room.z0 + 1.1 + Math.random() * (room.z1 - room.z0 - 2.2);
+    if (Math.hypot(x - from.x, z - from.z) > 1.2 && clearLine(world, from, { x, z })) return { x, z };
+  }
+  return null;
 }
 
-// Indoor plan: residents wander their current room and also walk through doorways
-// into neighbouring rooms rather than staying only in the archive.
-export function roomWander(roomOrRooms, world, openings = []) {
-  const rooms = Array.isArray(roomOrRooms) ? roomOrRooms : [roomOrRooms];
-  return (w) => {
-    let curIdx = rooms.findIndex((r) => w.pos.x >= r.x0 && w.pos.x <= r.x1 && w.pos.z >= r.z0 && w.pos.z <= r.z1);
-    if (curIdx < 0) curIdx = w.room ?? 0;
-    w.room = curIdx;
-    const room = rooms[curIdx] || rooms[0];
-
-    // After the first local stroll, sometimes cross through a doorway into an adjacent room.
-    if (w._strolled && openings.length && Math.random() < 0.45) {
-      const doors = openings.filter((o) => o.rooms && (o.rooms[0] === curIdx || o.rooms[1] === curIdx));
-      if (doors.length) {
-        const o = doors[Math.floor(Math.random() * doors.length)];
-        const nextIdx = o.rooms[0] === curIdx ? o.rooms[1] : o.rooms[0];
-        const nextRoom = rooms[nextIdx];
-        if (nextRoom) {
-          const dx = o.axis === 'z' ? o.c : o.at;
-          const dz = o.axis === 'z' ? o.at : o.c;
-          const dir = o.axis === 'z' ? Math.sign((nextRoom.z0 + nextRoom.z1) / 2 - dz) || -1 : Math.sign((nextRoom.x0 + nextRoom.x1) / 2 - dx) || 1;
-          const pre = o.axis === 'z' ? { x: dx, z: dz - dir * 0.85 } : { x: dx - dir * 0.85, z: dz };
-          const post = o.axis === 'z' ? { x: dx, z: dz + dir * 0.85 } : { x: dx + dir * 0.85, z: dz };
-          if (clearLine(w.pos.x, w.pos.z, pre.x, pre.z, world, 0.32) && clearLine(pre.x, pre.z, post.x, post.z, world, 0.32)) {
-            for (let t = 0; t < 10; t++) {
-              const tx = nextRoom.x0 + 1.1 + Math.random() * Math.max(0.5, nextRoom.x1 - nextRoom.x0 - 2.2);
-              const tz = nextRoom.z0 + 1.1 + Math.random() * Math.max(0.5, nextRoom.z1 - nextRoom.z0 - 2.2);
-              if (clearLine(post.x, post.z, tx, tz, world, 0.34)) {
-                return [pre, { x: dx, z: dz }, post, { x: tx, z: tz, pause: 2.5 + Math.random() * 4 }];
-              }
-            }
-          }
-        }
-      }
-    }
-
-    for (let tries = 0; tries < 12; tries++) {
-      const x = room.x0 + 1.1 + Math.random() * (room.x1 - room.x0 - 2.2);
-      const z = room.z0 + 1.1 + Math.random() * (room.z1 - room.z0 - 2.2);
-      const d = Math.hypot(x - w.pos.x, z - w.pos.z);
-      if (d < 1.5) continue;
-      if (clearLine(w.pos.x, w.pos.z, x, z, world, 0.35)) {
-        w._strolled = true;
-        return [{ x, z, pause: 2 + Math.random() * 5 }];
-      }
-    }
-    return [];
+// Indoor plan: residents potter about their room, wander through doorways to other rooms,
+// head for the kitchen at mealtimes and sit still late at night. `links` are the house's
+// internal doorways ({ rooms: [a, b], axis, at, c }); `clock()` gives the town minute;
+// `kitchens` are rooms with a stove, fridge or pantry.
+export function houseWander(rooms, links, world, clock, kitchens = []) {
+  const through = (link, from) => {
+    const [a, b] = link.rooms, to = a === from ? b : a, side = (r) => (link.axis === 'z' ? Math.sign((rooms[r].z0 + rooms[r].z1) / 2 - link.at) : Math.sign((rooms[r].x0 + rooms[r].x1) / 2 - link.at));
+    const pt = (r, off) => (link.axis === 'z' ? { x: link.c, z: link.at + side(r) * off } : { x: link.at + side(r) * off, z: link.c });
+    return { to, pts: [pt(from, 0.9), { ...pt(to, 0.9), room: to }] };
   };
-}
-
-// Town plan: from wherever the villager is, walk to the sidewalk, along it (via the
-// nearest avenue when changing street) to another house's front doorway, and visit.
-export function townRoutes(lots, LOT_Z) {
-  const doors = [...lots.values()].map((l) => ({ coord: l.house.coordinate, x: l.doorPos.x, z: l.doorPos.z, row: l.lot.row }));
-  const sidewalk = (row) => row * LOT_Z - 3.5 * LOT_Z + 16 - 5.3;
-  const avenues = [-338, -208, -78, 52, 182, 312];
-  return (w) => {
-    const near = doors.filter((d) => Math.abs(d.row - w.row) <= 1 && d.coord !== w.at);
-    const to = near[Math.floor(Math.random() * near.length)];
-    if (!to) return [];
-    const path = [];
-    const sw = sidewalk(w.row);
-    path.push({ x: w.pos.x, z: sw });
-    if (to.row !== w.row) {
-      const ave = avenues.reduce((a, b) => (Math.abs(b - w.pos.x) < Math.abs(a - w.pos.x) ? b : a));
-      path.push({ x: ave, z: sw }, { x: ave, z: sidewalk(to.row) });
+  // Shortest room-to-room route through doorways (houses have at most a dozen rooms).
+  const route = (from, goal) => {
+    const prev = new Map([[from, null]]), queue = [from];
+    while (queue.length) {
+      const r = queue.shift(); if (r === goal) break;
+      for (const l of links) if (l.rooms.includes(r)) { const n = l.rooms[0] === r ? l.rooms[1] : l.rooms[0]; if (!prev.has(n)) { prev.set(n, { r, l }); queue.push(n); } }
     }
-    if (Math.random() < 0.35) path.push({ x: (path.at(-1).x + to.x) / 2, z: sidewalk(to.row), pause: 2 + Math.random() * 3 });
-    // Step right up to the neighbour's front door threshold so the hinged door swings open for the visit.
-    path.push({ x: to.x, z: sidewalk(to.row) }, { x: to.x, z: to.z + 1.15, pause: 5 + Math.random() * 7 });
-    w.row = to.row; w.at = to.coord;
+    if (!prev.has(goal)) return null;
+    const steps = []; for (let r = goal; prev.get(r); r = prev.get(r).r) steps.unshift(prev.get(r));
+    return steps;
+  };
+  return (w) => {
+    const m = clock() % 1440, meal = (m >= 420 && m < 480) || (m >= 720 && m < 780) || (m >= 1080 && m < 1170);
+    const night = m >= 1380 || m < 330;
+    w.activity = night ? 'dozing in an armchair' : meal ? (m < 600 ? 'making breakfast' : m < 900 ? 'making lunch' : 'cooking dinner') : 'pottering about';
+    if (night) return [{ x: w.pos.x, z: w.pos.z, pause: 30 }];
+    let goal = w.room;
+    if (meal && kitchens.length && !kitchens.includes(w.room)) goal = kitchens[0];
+    else if (!meal && links.length && Math.random() < 0.3) { const ls = links.filter((l) => l.rooms.includes(w.room)); const l = ls[Math.floor(Math.random() * ls.length)]; if (l) goal = l.rooms[0] === w.room ? l.rooms[1] : l.rooms[0]; }
+    if (goal === w.room) { const p = freePoint(rooms[w.room], world, w.pos); return p ? [{ ...p, pause: meal ? 8 + Math.random() * 8 : 2 + Math.random() * 5 }] : []; }
+    const steps = route(w.room, goal);
+    if (!steps) return [];
+    const path = []; let at = w.room, from = w.pos;
+    for (const { l } of steps) {
+      const { to, pts } = through(l, at);
+      const leg = reach(rooms[at], world, from, pts[0]);
+      if (!leg) return path.length ? path : [];          // furniture blocks the way: go as far as possible
+      path.push(...leg, pts[1]); at = to; from = pts[1];
+    }
+    const end = freePoint(rooms[goal], world, from);
+    if (end) path.push({ ...end, pause: meal ? 10 + Math.random() * 10 : 3 + Math.random() * 6 });
     return path;
   };
 }

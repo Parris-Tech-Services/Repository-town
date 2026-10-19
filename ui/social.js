@@ -1,8 +1,10 @@
 // Local-first social simulation for the walking villagers.
 // Relationships are deliberately small and explainable: a seeded starting score,
 // a bounded event log, and player actions that nudge the score over time.
+import { VILLAGER_NAMES } from '../world/life.js';
+
 const KEY = 'repository-town.social.v1';
-const VILLAGERS = ['Mabel', 'Arlo', 'Bea', 'Cas', 'Dot', 'Ezra', 'Flo', 'Gus', 'Hattie', 'Ivo', 'June', 'Kip', 'Lou', 'Merv', 'Nora', 'Ollie', 'Peg', 'Rafe', 'Sadie', 'Theo', 'Una', 'Vern', 'Win', 'Zara'];
+const VILLAGERS = VILLAGER_NAMES;
 
 const hash = (text) => [...String(text)].reduce((n, c) => ((n * 31) + c.charCodeAt(0)) >>> 0, 17);
 const pairKey = (a, b) => [String(a), String(b)].sort().join('|');

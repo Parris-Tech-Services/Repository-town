@@ -3,17 +3,19 @@ import { CollisionWorld } from './engine/collision.js';
 import { Input } from './engine/input.js';
 import { Player } from './engine/player.js';
 import { loadSave, writeSave, clearSave } from './engine/save.js';
-import { buildTown, streetSigns, lotPosition, LOT_Z } from './world/town.js';
+import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
-import { animate, windowMaterial, lampMaterial } from './world/builder.js';
+import { animate } from './world/builder.js';
 import { makeLabel, disposeLabel } from './ui/labels.js';
 import { runInteraction, esc } from './ui/interactions.js';
 import { setArchiveLoader } from './ui/archive.js';
-import { createExpedition } from './adventure/expedition.js';
+import { npcBehaviour } from './ui/npc.js';
 import { mountNPCChat } from './ui/npc-chat.js';
-import { npcBehaviour, villagerName } from './ui/npc.js';
-import { placeTownNPCs, animateNPCs, initialiseNPCWorksites, makePerson, Walker, roomWander, townRoutes, freeSpot } from './world/npcs.js';
-import { createSound } from './ui/sound.js';
+import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
+import { createTownLife } from './world/townlife.js';
+import { createAmbience } from './ui/ambience.js';
+import { placePanel, buy, ledgerPanel, guidePanel, relicsLeft, townContext } from './ui/townpanels.js';
+import { createExpedition } from './adventure/expedition.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('status').textContent = t; };
@@ -22,10 +24,6 @@ addEventListener('error', (e) => fail(e.error || e.message));
 addEventListener('unhandledrejection', (e) => fail(e.reason));
 
 const SKY = 0x96c9f0, INDOOR = 0x1a1612;
-const SKY_DAY = new THREE.Color(0x96c9f0), SKY_DUSK = new THREE.Color(0xd98a6c), SKY_NIGHT = new THREE.Color(0x0f172a);
-const HEMI_DAY = new THREE.Color(0xffffff), HEMI_NIGHT = new THREE.Color(0x4b6584);
-const SUN_DAY = new THREE.Color(0xffe7bf), SUN_DUSK = new THREE.Color(0xff9f68), SUN_NIGHT = new THREE.Color(0x6c88c4);
-const GROUND_DAY = new THREE.Color(0x79b46f), GROUND_NIGHT = new THREE.Color(0x284232);
 
 async function start() {
   // The standalone single-file build embeds the data so it runs from file:// with no server.
@@ -50,55 +48,32 @@ async function start() {
   scene.fog = fog;
   const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.15, 185);
   const sky = new THREE.Group();
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x6e856e, 2.1);
-  sky.add(hemi);
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x6e856e, 2.1); sky.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe7bf, 2.0); sun.position.set(-70, 110, 55); sky.add(sun);
   scene.add(sky);
 
   const town = buildTown(scene, houses, data.streets);
-  const sound = createSound();
-  const TIME_MODES = ['day', 'dusk', 'night', 'cycle'];
-  const TIME_LABELS = { day: '☀️ Day', dusk: '🌅 Dusk', night: '🌙 Night', cycle: '🔄 Cycle' };
-  let timeMode = 'day', nightLevel = 0;
-  let lowPerf = touch;
-  function updateAtmosphere(t = 0) {
-    nightLevel = timeMode === 'day' ? 0 : timeMode === 'dusk' ? 0.52 : timeMode === 'night' ? 1 : (1 - Math.cos(t * 0.08)) / 2;
-    const skyCol = nightLevel < 0.5
-      ? SKY_DAY.clone().lerp(SKY_DUSK, nightLevel * 2)
-      : SKY_DUSK.clone().lerp(SKY_NIGHT, (nightLevel - 0.5) * 2);
-    if (mode === 'town') scene.background.copy(skyCol);
-    fog.color.copy(skyCol);
-    hemi.color.copy(HEMI_DAY).lerp(HEMI_NIGHT, nightLevel);
-    hemi.intensity = 2.1 - nightLevel * 1.15;
-    sun.color.copy(nightLevel < 0.5 ? SUN_DAY.clone().lerp(SUN_DUSK, nightLevel * 2) : SUN_DUSK.clone().lerp(SUN_NIGHT, (nightLevel - 0.5) * 2));
-    sun.intensity = 2.0 - nightLevel * 1.35;
-    if (town.ground) town.ground.material.color.copy(GROUND_DAY).lerp(GROUND_NIGHT, nightLevel);
-    windowMaterial.emissiveIntensity = nightLevel > 0.18 ? Math.min(0.95, (nightLevel - 0.15) * 1.1) : 0;
-    lampMaterial.emissiveIntensity = 0.15 + nightLevel * 0.85;
-  }
-
+  // Town life: farms, shops, trucks and 32 villagers with jobs and meals (src/world/life.js).
+  const townLife = createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog });
+  const life = townLife.life;
+  // The Town Guide kiosk by the start (src/world/town.js) opens the guide panel.
+  const guideSpot = { key: 'guide', pos: town.guidePos, label: '🗺️ Read the Town Guide', guide: true };
+  // Named street characters (src/ui/npc-data.js) with their own AI chat window.
   const streetNPCs = placeTownNPCs(town.group, town.lots, makeLabel);
-  initialiseNPCWorksites(streetNPCs,town.group);
-  // Villagers: one resident from every eighth house walks the town between neighbours' doors.
-  const routes = townRoutes(town.lots, LOT_Z);
-  const villagers = houses.filter((_, i) => i % 8 === 3).map((h, i) => {
-    const l = town.lots.get(h.coordinate);
-    const name = villagerName(i);
-    const pos = new THREE.Vector3(l.doorPos.x + (i % 2 ? 0.8 : -0.8), 0, l.doorPos.z + 2.2);
-    const w = new Walker(makePerson(i * 13 + 5, h.ext.walls, h.ext.roof), pos, { speed: 1.25 + (i % 5) * 0.08, name });
-    w.row = l.lot.row; w.at = h.coordinate; w.wait = Math.random() * 6;
-    const s = makeLabel(name, 'interactive'); s.position.set(0, 2.25, 0); w.group.add(s); w.tag = s;
-    town.group.add(w.group);
-    return { walker: w, key: `villager:${h.coordinate}`, house: h, pos, label: `Talk to ${name} (${h.coordinate} · ${h.name})`, act: { do: 'npc', name, title: name, role: 'villager' } };
-  });
-  let nearPerson = null, nearGuide = false;
+  initialiseNPCWorksites(streetNPCs, town.group);
+  let nearPerson = null, nearNPC = null;
+  const ambience = createAmbience();
+  const wake = () => ambience.start();
+  addEventListener('pointerdown', wake); addEventListener('keydown', wake);
+  // Smooth mode draws less of the distance; phones start with it on.
+  let lowPerf = touch;
   streetSigns(town.group, data.streets, makeLabel);
   const half = { x: town.bounds.width / 2, z: town.bounds.depth / 2 };
   const edges = [
     { x0: -half.x - 5, x1: half.x + 5, z0: -half.z - 5, z1: -half.z }, { x0: -half.x - 5, x1: half.x + 5, z0: half.z, z1: half.z + 5 },
     { x0: -half.x - 5, x1: -half.x, z0: -half.z, z1: half.z }, { x0: half.x, x1: half.x + 5, z0: -half.z, z1: half.z },
   ];
-  const townWorld = new CollisionWorld([...town.colliders, ...edges]);
+  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...edges]);
 
   const input = new Input(renderer.domElement, $('touch'));
   const captureButton = $('btn-capture');
@@ -118,13 +93,13 @@ async function start() {
   if (input.touch) $('touch').hidden = false;
   const player = new Player(camera);
   const npcChat = mountNPCChat(document);
-
   let interactionRequest = 0;
+
   let mode = 'town', inside = null, world = townWorld, overview = false;
   const active = new Set();
   const visited = new Set();
   const houseLabels = new Map();
-  let nearHouse = null, nearThing = null, nearNPC = null, panelOpen = null, cardTimer = 0;
+  let nearHouse = null, nearThing = null, panelOpen = null, cardTimer = 0;
   const expedition = createExpedition({town,makeLabel,openPanel,travel,
     releaseMouse:()=>input.releaseMouse()});
 
@@ -139,11 +114,20 @@ async function start() {
     closePanel(); npcChat.close(); $('npc-roster').hidden = true;
     const f = frontOf(coord);
     player.place(f.x, f.z, f.yaw);
-    // Clear any M key queued during a slow frame so search cannot reopen overview.
+    // A map toggle still queued from a slow bird's-eye frame must not reopen the map.
     input.pressed.delete('map');
     setOverview(false);
     status(`Standing outside ${coord}.`);
     return true;
+  }
+  // Stands on the footpath outside a shop, farm or the square, facing it.
+  function goPlace(id) {
+    closePanel(); npcChat.close();
+    if (mode === 'house') leave(false);
+    const f = townLife.placeFront(id);
+    player.place(f.x, f.z, 0);
+    input.pressed.delete('map'); setOverview(false);
+    status(`Outside the ${life.place(id).name}.`);
   }
   function enter(coord) {
     const h = byCoord.get(coord);
@@ -153,21 +137,20 @@ async function start() {
     town.group.visible = false;
     scene.background.set(INDOOR); scene.fog = null;
     world = new CollisionWorld(built.colliders);
-    // Residents get a body that wanders across rooms; the interactable tracks its current room.
+    // Residents move between rooms, and cook in the kitchen (if the house has one) at mealtimes;
+    // the interactable shares their position and tracks the room they are in.
+    const kitchens = [...new Set(built.placedProps.filter((p) => ['stove', 'fridge', 'pantry', 'coffeeMachine'].includes(p.type)).map((p) => p.room))];
     inside.people = built.walkers.map((w, i) => {
       freeSpot(w.pos, world);
       const walker = new Walker(makePerson(coord.charCodeAt(0) + i * 7, w.act.c ?? 0x3f6fb5, w.act.a ?? 0x2f3440), w.pos, { speed: 0.9, name: w.act.name });
       if (w.label) { const s = makeLabel(w.act.name || w.label, 'interactive'); s.position.set(0, 2.25, 0); s.userData.labelKind = 'interactive'; walker.group.add(s); walker.tag = s; }
-      walker.room = w.room;
+      walker.room = w.room; walker.activity = 'pottering about';
       const interactable = built.interactables.find((x) => x.key === w.key);
       walker.onMove = (pos) => {
         const ri = built.rooms.findIndex((r) => pos.x >= r.x0 && pos.x <= r.x1 && pos.z >= r.z0 && pos.z <= r.z1);
-        if (ri >= 0) {
-          walker.room = ri;
-          if (interactable) { interactable.room = ri; interactable.roomName = built.rooms[ri].name; }
-        }
+        if (ri >= 0) { walker.room = ri; if (interactable) { interactable.room = ri; interactable.roomName = built.rooms[ri].name; } }
       };
-      walker.plan = roomWander(built.rooms, world, built.openings || []);
+      walker.plan = houseWander(built.rooms, built.openings, world, () => life.minute, kitchens);
       walker.key = w.key;
       built.group.add(walker.group);
       return walker;
@@ -177,7 +160,7 @@ async function start() {
     $('btn-exit').hidden = false;
     visited.add(coord);
     expedition.noteVisit(coord);
-    sound.door();
+    ambience.door();
     closePanel();
     status(`Inside ${h.coordinate} · ${h.name}. Walk back through the front door to leave.`);
     showCard(h, true);
@@ -191,11 +174,11 @@ async function start() {
     inside.group.traverse((o) => { if (o.isSprite) disposeLabel(o); else if (o.geometry && o.geometry.type !== 'BoxGeometry') o.geometry.dispose(); });
     inside = null; mode = 'town'; world = townWorld;
     $('btn-exit').hidden = true;
-    town.group.visible = true; updateAtmosphere(clock.elapsedTime); scene.fog = fog;
+    town.group.visible = true; scene.background.set(SKY); scene.fog = fog;
     if (placeOutside) { const l = town.lots.get(coord); player.place(l.doorPos.x, l.doorPos.z + 4, Math.PI); }
     // Close the door behind the player so the doorway does not re-trigger.
     const d = town.doors.find((d) => d.userData.coordinate === coord); if (d) d.userData.open = 0;
-    sound.door();
+    ambience.door();
     status(`Back on the street at ${coord}.`);
   }
 
@@ -206,7 +189,7 @@ async function start() {
     overview = on && mode === 'town';
     $('btn-map').setAttribute('aria-pressed', String(overview));
     scene.fog = overview || mode === 'house' ? null : fog;
-    camera.far = overview ? 600 : (lowPerf ? 135 : 185); camera.updateProjectionMatrix();
+    camera.far = overview ? 600 : (lowPerf ? 130 : 185); camera.updateProjectionMatrix();
     if (overview) {
       for (const l of town.lots.values()) if (l.mesh) l.mesh.visible = true;
       status('Tap or click a house to travel there.');
@@ -222,39 +205,6 @@ async function start() {
     if (best && bd < 16) travel(best);
   });
 
-  function showGuide() {
-    openPanel({
-      title: '🗺️ Welcome to Repository Town — Town Guide',
-      body: `<p>Every one of the <b>188 houses</b> in Repository Town is built from a real GitHub repository along 8 streets (rows 1–8, columns A–Z).</p>
-        <p><b>🧭 Adventure Guild & Relics:</b> Right beside the starting square stands the Guild Chest. Twelve glowing relics are hidden outside public houses across town — solve their puzzles to unlock the Explorer Compass, Archivist’s Lens, and Crown of Discovery.</p>
-        <p><b>🗣️ Villagers, Gossip & Errands:</b> Stop any walking villager or indoor resident (press <b>E</b> or tap <b>✋</b>). Ask them for <i>Adventure Guild relic hints</i>, <i>gossip about their neighbours</i>, or a <i>small errand</i> to visit another house!</p>
-        <p><b>🕹️ Playable Arcades:</b> Houses built from game projects have an Arcade room inside where you can play the real game right in the browser.</p>
-        <p><b>🌅 Atmosphere & Controls:</b> Toggle <b>☀️ Day / 🌅 Dusk / 🌙 Night</b> (or press <b>T</b>) to watch the windows and streetlamps light up, and tap <b>🔇 Sound</b> for gentle town ambience.</p>`,
-      actions: [
-        { label: '📖 Open Quest Journal', run: () => { closePanel(); expedition.showJournal(); return { title: 'Quest Journal', body: '<p>Journal opened.</p>' }; } },
-        { label: '🗣️ Meet a Villager', run: () => { closePanel(); window.__town.meetVillager(0); status('Standing beside a villager — press E or ✋ to chat.'); return { title: 'Villager', body: '<p>Say hello!</p>' }; } },
-        { label: '🕹️ Visit M5 (Arcade & Relic)', run: () => { closePanel(); travel('M5'); return { title: 'M5', body: '<p>Arrived at M5.</p>' }; } },
-        { label: '🌙 Toggle Day / Night', run: () => { cycleTime(); return { title: 'Atmosphere updated', body: `<p>Time of day set to ${TIME_LABELS[timeMode]}.</p>` }; } },
-      ],
-    }, { id: 'guide' });
-  }
-
-  function cycleTime() {
-    timeMode = TIME_MODES[(TIME_MODES.indexOf(timeMode) + 1) % TIME_MODES.length];
-    if ($('btn-time')) $('btn-time').textContent = TIME_LABELS[timeMode];
-    updateAtmosphere(clock.elapsedTime);
-    status(`Time of day: ${TIME_LABELS[timeMode]}.`);
-  }
-
-  function syncPerfBtn() {
-    if (!$('btn-perf')) return;
-    $('btn-perf').setAttribute('aria-pressed', String(lowPerf));
-    $('btn-perf').textContent = lowPerf ? '⚡ Smooth: On' : '⚡ Smooth';
-    fog.near = lowPerf ? 42 : 60;
-    fog.far = lowPerf ? 120 : 170;
-    if (!overview) { camera.far = lowPerf ? 130 : 185; camera.updateProjectionMatrix(); }
-  }
-
   // ── HUD ──────────────────────────────────────────────────────────────────
   const list = $('house-list');
   for (const h of houses) { const o = document.createElement('option'); o.value = `${h.coordinate} · ${h.name}`; list.append(o); }
@@ -266,23 +216,30 @@ async function start() {
     if (h) { travel(h.coordinate); $('search').blur(); } else status(`No house matches "${$('search').value}".`);
   });
   $('btn-map').onclick = () => setOverview(!overview);
-  if ($('btn-guide')) $('btn-guide').onclick = () => showGuide();
-  if ($('btn-time')) $('btn-time').onclick = () => cycleTime();
-  if ($('btn-sound')) $('btn-sound').onclick = () => {
-    const on = sound.toggle();
-    $('btn-sound').setAttribute('aria-pressed', String(on));
-    $('btn-sound').textContent = on ? '🔊 Sound' : '🔇 Sound';
-    status(on ? 'Town ambient sound enabled.' : 'Town sound muted.');
-  };
-  if ($('btn-perf')) {
-    syncPerfBtn();
-    $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
+  // Time of day: jumps the town clock (src/world/life.js) to the next part of the day.
+  const TIMES = [[7 * 60, '🌅 Morning'], [12 * 60, '☀️ Midday'], [18 * 60 + 40, '🌇 Dusk'], [22 * 60, '🌙 Night']];
+  function cycleTime() {
+    const next = TIMES.find(([m]) => m > life.minute + 1) || TIMES[0];
+    if (next[0] < life.minute) { life.day++; life.newDay(); }
+    life.minute = next[0];
+    status(`${next[1]} — the town clock now reads ${life.time()}.`);
   }
+  const syncTimeBtn = () => { const h = life.minute / 60; const label = h < 6 || h >= 20.5 ? '🌙 Night' : h < 9 ? '🌅 Morning' : h < 17.5 ? '☀️ Day' : '🌇 Dusk'; if ($('btn-time').textContent !== label) $('btn-time').textContent = label; };
+  $('btn-time').onclick = () => cycleTime();
   addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() !== 't' || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
     if (e.target?.closest?.('input,textarea,select,[contenteditable],#panel,#game,#npc-chat')) return;
     cycleTime();
   });
+  function syncPerfBtn() {
+    $('btn-perf').setAttribute('aria-pressed', String(lowPerf));
+    $('btn-perf').textContent = lowPerf ? '⚡ Smooth: On' : '⚡ Smooth';
+    fog.near = lowPerf ? 42 : 60; fog.far = lowPerf ? 120 : 170;
+    if (!overview) { camera.far = lowPerf ? 130 : 185; camera.updateProjectionMatrix(); }
+  }
+  syncPerfBtn();
+  $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
+  $('btn-guide').onclick = () => openPanel(guideContent(), guideSpot);
   $('btn-help').onclick = () => { input.releaseMouse(); $('help').hidden = !$('help').hidden; };
   $('btn-npcs').onclick = () => { $('npc-roster').hidden = !$('npc-roster').hidden; input.reset(); };
   $('npc-roster-close').onclick = () => { $('npc-roster').hidden = true; };
@@ -298,10 +255,9 @@ async function start() {
     $('card').hidden = false;
   }
   function openPanel(content, thing) {
+    // Panels have buttons and text boxes: give the mouse pointer back.
     input.releaseMouse();
     panelOpen = { content, thing };
-    // Panels have buttons and text boxes: give the mouse pointer back.
-    if (document.pointerLockElement) document.exitPointerLock();
     $('panel').classList.toggle('wide', !!content.wide);
     $('panel-body').scrollTop = 0; $('panel').scrollTop = 0;
     $('panel-title').textContent = content.title;
@@ -310,7 +266,7 @@ async function start() {
     const actions = $('panel-actions'); actions.innerHTML = '';
     for (const a of content.actions || []) {
       if (a.url) { const el = document.createElement('a'); el.href = a.url; el.target = '_blank'; el.rel = 'noopener'; el.textContent = a.label; el.className = 'btn-link'; actions.append(el); }
-      else { const el = document.createElement('button'); el.textContent = a.label; el.onclick = () => (a.play ? startGame(a.play) : openPanel(a.run ? a.run() : content.onAnswer(a.answer), thing));
+      else { const el = document.createElement('button'); el.textContent = a.label; el.onclick = () => { if (a.play) return startGame(a.play); const next = a.run ? a.run() : content.onAnswer(a.answer); if (next) openPanel(next, thing); };
         if (a.play) el.className = 'play'; actions.append(el); }
     }
     $('panel').hidden = false;
@@ -323,7 +279,7 @@ async function start() {
     closePanel(); npcChat.close(); $('npc-roster').hidden = true;
     input.reset();
     playing = g;
-    if (document.pointerLockElement) document.exitPointerLock();
+    input.releaseMouse();
     $('game-title').textContent = g.title;
     $('game-frame').src = `games/${encodeURIComponent(g.id)}/index.html`;
     $('game').hidden = false;
@@ -345,7 +301,6 @@ async function start() {
 
   function closePanel() {
     interactionRequest++; input.reset();
-    if (panelOpen?.thing?.walker) panelOpen.thing.walker.talking = false;
     if (inside?.people) for (const p of inside.people) p.talking = false;
     panelOpen = null; $('panel').classList.remove('chat-typing'); $('panel').hidden = true;
   }
@@ -370,37 +325,56 @@ async function start() {
     }
     return pick;
   }
+  // Relics, street characters, villagers, the guide and shop counters can stand close
+  // together, so Use goes to whichever is nearest; everything stays reachable.
+  const away = (p) => (p ? Math.hypot(player.pos.x - p.pos.x, player.pos.z - p.pos.z) : Infinity);
   function use() {
-    // Relics, the named characters and villagers can stand close together, so use
-    // whichever is nearest; every conversation and treasure stays reachable.
-    const dist=(p)=>p?Math.hypot(player.pos.x-p.pos.x,player.pos.z-p.pos.z):Infinity;
-    const treasure=mode==='town'?expedition.nearby(player.pos):null;
-    const treasureD=dist(treasure), npcD=dist(nearNPC), personD=mode==='town'?dist(nearPerson):Infinity, guideD=mode==='town'&&nearGuide?Math.hypot(player.pos.x-town.guidePos.x,player.pos.z-town.guidePos.z):Infinity;
-    if(treasure && treasureD<=npcD && treasureD<=personD && treasureD<=guideD){expedition.use(player.pos);sound.relic();return;}
-    if (nearNPC && npcD<=personD && npcD<=guideD) { input.releaseMouse(); closePanel(); $('npc-roster').hidden=true; npcChat.show(nearNPC.npc, nearNPC.house || null); input.reset(); return; }
-    if (mode === 'town' && nearGuide && guideD <= personD) { showGuide(); return; }
-    if (mode === 'house' && nearThing) {
-      const thing = nearThing, request = ++interactionRequest, house = inside;
-      const person = thing.person && inside.people?.find((p) => p.key === thing.key);
-      if (person) person.talking = true;
-      Promise.resolve(runInteraction(thing, ctx)).then((content) => { if (request === interactionRequest && inside === house && mode === 'house') openPanel(content, thing); })
-        .catch((e) => { if (request === interactionRequest && inside === house) openPanel({ title: thing.label, body: `<p>Couldn't open this exhibit: ${esc(e.message)}</p>` }, thing); });
+    if (mode === 'town') {
+      const treasure = expedition.nearby(player.pos), treasureD = away(treasure), npcD = away(nearNPC), personD = away(nearPerson);
+      if (treasure && treasureD <= npcD && treasureD <= personD) { expedition.use(player.pos); ambience.relic(); return; }
+      if (nearNPC && npcD <= personD) { input.releaseMouse(); closePanel(); $('npc-roster').hidden = true; npcChat.show(nearNPC.npc, null); input.reset(); return; }
+      if (nearPerson) { talkTo(nearPerson); return; }
+      if (nearHouse) showCard(nearHouse.house);
       return;
     }
-    if (mode === 'town' && nearPerson) { const p = nearPerson; p.walker.talking = true; openPanel(npcBehaviour(p, { house: p.house, houses }), p); return; }
-    if (mode === 'town' && nearHouse) showCard(nearHouse.house);
+    if (nearThing) {
+      const thing = nearThing, request = ++interactionRequest, house = inside;
+      const person = thing.person && inside.people?.find((p) => p.key === thing.key);
+      if (person) { person.talking = true; openPanel(npcBehaviour(thing, { house: inside.house, houses, town: () => townContext(life, null, person.activity) }), thing); return; }
+      Promise.resolve(runInteraction(thing, ctx)).then((content) => { if (request === interactionRequest && inside === house && mode === 'house') openPanel(content, thing); })
+        .catch((e) => { if (request === interactionRequest && inside === house) openPanel({ title: thing.label, body: `<p>Couldn't open this exhibit: ${esc(e.message)}</p>` }, thing); });
+    }
   }
-
-  function pickNPC(list, maxDistance=3.6) {
-    const facing=player.forward(); let best=null,score=Infinity;
-    for(const x of list) {
-      const dx=x.pos.x-player.pos.x,dz=x.pos.z-player.pos.z,d=Math.hypot(dx,dz);
-      if(d>maxDistance)continue;
-      const dot=d<.1?1:(dx*facing.x+dz*facing.z)/d;
-      if(dot<-.2&&d>1.6)continue;
-      const rank=d-.6*dot;if(rank<score){score=rank;best=x;}
+  // Street characters: the one ahead of the player, within reach.
+  function pickNPC(list, maxDistance = 3.6) {
+    const facing = player.forward(); let best = null, score = Infinity;
+    for (const x of list) {
+      const dx = x.pos.x - player.pos.x, dz = x.pos.z - player.pos.z, d = Math.hypot(dx, dz);
+      if (d > maxDistance) continue;
+      const dot = d < 0.1 ? 1 : (dx * facing.x + dz * facing.z) / d;
+      if (dot < -0.2 && d > 1.6) continue;
+      const rank = d - 0.6 * dot; if (rank < score) { score = rank; best = x; }
     }
     return best;
+  }
+
+  // Town-life conversations and panels.
+  function guideContent() {
+    return guidePanel(life, {
+      go: (id) => { goPlace(id); return null; }, ledger: () => ledgerPanel(life),
+      // Rowan (src/ui/npc-data.js) is the guide you can chat with.
+      chat: () => { closePanel(); npcChat.show(streetNPCs.find((n) => n.npc.id === 'rowan')?.npc || 'rowan', null); return null; },
+      journal: () => { closePanel(); expedition.showJournal(); return null; },
+      arcade: () => { travel('M5'); return null; },
+      speed: () => life.speed, setSpeed: (n) => { life.speed = n; townLife.save(); }, relic: () => relicsLeft()[0],
+    });
+  }
+  function talkTo(p) {
+    if (p.guide) { openPanel(guideContent(), p); return; }
+    if (p.spot) { const c = p.spot.id === 'hall' ? ledgerPanel(life) : placePanel(life, p.spot.id, (id, g) => buy(life, id, g)); openPanel(c, p); return; }
+    const v = p.v, home = byCoord.get(v.home.coordinate);
+    p.talking = true;
+    openPanel(npcBehaviour({ act: { do: 'npc', name: v.name, role: 'villager' } }, { house: home, houses, town: () => townContext(life, v) }), p);
   }
 
   // ── Persistence ──────────────────────────────────────────────────────────
@@ -415,8 +389,11 @@ async function start() {
   } else { spawn(); status('Welcome! Walk up to the Town Guide or any front door to begin.'); }
   let saveTimer = 0;
   const save = () => writeSave({ pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, inside: inside?.house.coordinate || null, visited: [...visited] });
-  addEventListener('visibilitychange', () => { if (document.hidden) save(); });
-  addEventListener('pagehide', save);
+  addEventListener('visibilitychange', () => { if (document.hidden) { save(); townLife.save(); } });
+  addEventListener('pagehide', () => { save(); townLife.save(); });
+  const syncSound = () => { $('btn-sound').textContent = ambience.on ? '🔊 Sound' : '🔇 Sound'; $('btn-sound').setAttribute('aria-pressed', String(ambience.on)); };
+  $('btn-sound').onclick = () => { ambience.setOn(!ambience.on); syncSound(); status(ambience.on ? 'Town sound on.' : 'Town sound muted.'); };
+  syncSound();
 
   // ── Minimap ──────────────────────────────────────────────────────────────
   const mm = $('minimap'), mctx = mm.getContext('2d');
@@ -433,6 +410,9 @@ async function start() {
     }
     const sx = (W - 10) / town.bounds.width, sz = (H - 10) / town.bounds.depth;
     for (const [c, l] of town.lots) { mctx.fillStyle = visited.has(c) ? '#7fe0ff' : `hsl(${l.lot.row * 45},45%,62%)`; mctx.fillRect(5 + (l.lot.x + town.bounds.width / 2) * sx - 3, 5 + (l.lot.z + town.bounds.depth / 2) * sz - 2, 6, 4); }
+    // Town buildings and farms on street 8, and the trucks on the road.
+    for (const p of life.places.values()) { mctx.fillStyle = p.kind === 'farm' ? '#9bd36a' : '#f2c86a'; mctx.fillRect(5 + (p.x + town.bounds.width / 2) * sx - 3, 5 + (p.door.z - 7.5 + town.bounds.depth / 2) * sz - 2, 6, 4); }
+    mctx.fillStyle = '#ffffff'; for (const t of life.trucks) mctx.fillRect(5 + (t.x + town.bounds.width / 2) * sx - 1.5, 5 + (t.z + town.bounds.depth / 2) * sz - 1.5, 3, 3);
     expedition.drawMap(mctx,W,H,town.bounds);
     drawArrow(5 + (player.pos.x + town.bounds.width / 2) * sx, 5 + (player.pos.z + town.bounds.depth / 2) * sz);
   }
@@ -456,50 +436,61 @@ async function start() {
       requestAnimationFrame(frame);
       return;
     }
-    if (timeMode === 'cycle') updateAtmosphere(t);
     if (input.consume('map')) setOverview(!overview);
-    if (input.consume('back')) { if(expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden=true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
+    if (input.consume('back')) { if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
     if(expedition.isOpen()){input.keys.clear();input.takeLook();input.pressed.delete('use');}
     if (overview) {
       camera.position.set(player.pos.x, 150, player.pos.z + 95); camera.lookAt(player.pos.x, 0, player.pos.z);
       input.takeLook(); input.consume('jump');
-    } else if (expedition.isOpen() || panelOpen || npcChat.isOpen() || !$('npc-roster').hidden || !$('help').hidden) { input.reset(); }
+    } else if (expedition.isOpen() || panelOpen || npcChat.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
     else player.update(dt, input, world);
-
     const movedDist = Math.hypot(player.pos.x - prevX, player.pos.z - prevZ);
     prevX = player.pos.x; prevZ = player.pos.z;
-    sound.update(dt, { moving: movedDist > 0.015, running: movedDist > dt * 5.2, mode, night: nightLevel });
+
+    // The town keeps living while the player is indoors; the sky follows its clock.
+    const talkingTo = panelOpen?.thing?.v ? panelOpen.thing : null;
+    townLife.update(dt, t, { player, mode, overview, camera, talkingTo });
+    const clockText = `🕖 ${life.time()} · Day ${life.day}${life.speed > 1 ? ` · ${life.speed}×` : ''}`;
+    if ($('clock').textContent !== clockText) $('clock').textContent = clockText;
+    syncTimeBtn();
+    {
+      let truck = Infinity; for (const tr of life.trucks) truck = Math.min(truck, Math.hypot(tr.x - player.pos.x, tr.z - player.pos.z));
+      const busy = Math.min(1, townLife.people.filter((p) => !p.v.inside && Math.abs(p.v.x - player.pos.x) < 25 && Math.abs(p.v.z - player.pos.z) < 25).length / 5);
+      for (const e of townLife.events.splice(0)) ambience.play(e, mode === 'house' ? 300 : Math.hypot(e.x - player.pos.x, e.z - player.pos.z));
+      ambience.update(dt, { day: life.daylight(), busy: mode === 'town' ? busy : 0, truck: mode === 'town' ? truck : Infinity, indoors: mode === 'house', moving: movedDist > 0.015, running: movedDist > dt * 5.2 });
+    }
 
     if (mode === 'town') {
-      const npcCull = lowPerf ? 48 : 65, villagerCull = lowPerf ? 56 : 90, houseCull = lowPerf ? 115 : 175;
-      nearNPC=pickNPC(streetNPCs); animateNPCs(streetNPCs,t,player.pos,dt,npcChat.isOpen()?npcChat.active():null,townWorld,npcCull);
-      // Villagers walk everywhere; only nearby ones are drawn.
+      const npcCull = lowPerf ? 48 : 65, houseCull = lowPerf ? 115 : 175, labelCull = lowPerf ? 42 : 55;
+      nearNPC = pickNPC(streetNPCs);
+      animateNPCs(streetNPCs, t, player.pos, dt, npcChat.isOpen() ? npcChat.active() : null, townWorld, npcCull);
+      // Villagers, the guide kiosk and the shop counters: pick the one the player is facing.
       nearPerson = null; let bestP = Infinity;
-      for (const v of villagers) {
-        v.walker.update(dt, t, player, routes);
-        const d = Math.hypot(v.pos.x - player.pos.x, v.pos.z - player.pos.z);
-        v.walker.group.visible = d < villagerCull && !overview;
-        if (d < 2.6) {
-          tmp.copy(v.pos).sub(player.pos); tmp.y = 0;
-          const facing = d < 0.01 ? 1 : tmp.normalize().dot(player.forward());
-          const score = d - 1.6 * facing;
-          if ((facing > 0.2 || d < 1.2) && score < bestP) { bestP = score; nearPerson = v; }
-        }
-      }
-      nearGuide = town.guidePos && Math.hypot(town.guidePos.x - player.pos.x, town.guidePos.z - player.pos.z) < 2.8;
+      const consider = (c, reach) => {
+        const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
+        if (d > reach) return;
+        tmp.copy(c.pos).sub(player.pos); tmp.y = 0;
+        const facing = d < 0.01 ? 1 : tmp.normalize().dot(player.forward());
+        const score = d - 1.6 * facing;
+        if ((facing > 0.2 || d < 1.2) && score < bestP) { bestP = score; nearPerson = c; }
+      };
+      for (const p of townLife.people) if (!p.v.inside) consider(p, 2.6);
+      consider(guideSpot, 2.6);
+      for (const sp of townLife.spots) consider({ ...sp, spot: sp }, 3.2);
       nearHouse = null; let best = 6;
       for (const l of town.lots.values()) {
         const d = Math.hypot(l.doorPos.x - player.pos.x, l.doorPos.z - player.pos.z);
         if (l.mesh) l.mesh.visible = overview || d < houseCull;
         if (d < best) { best = d; nearHouse = l; }
       }
+      // Front doors open for the player, street characters at home, and villagers going in or out.
       for (const d of town.doors) {
         const dist = Math.hypot(d.userData.centre.x - player.pos.x, d.userData.centre.z - player.pos.z);
         d.visible = overview || dist < (lowPerf ? 65 : 110);
         if (!d.visible) continue;
-        const residentNearby=streetNPCs.some(n=>n.npc.coordinate===d.userData.coordinate && Math.hypot(n.pos.x-d.userData.centre.x,n.pos.z-d.userData.centre.z)<2.8);
-        const villagerNearby=villagers.some(v=>Math.hypot(v.pos.x-d.userData.centre.x,v.pos.z-d.userData.centre.z)<2.2);
-        const target = dist < 3.2 || residentNearby || villagerNearby ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.open * 1.55;
+        const near = (p, r) => Math.hypot(p.x - d.userData.centre.x, p.z - d.userData.centre.z) < r;
+        const someone = streetNPCs.some((n) => n.npc.coordinate === d.userData.coordinate && near(n.pos, 2.8)) || townLife.people.some((p) => p.v.home.coordinate === d.userData.coordinate && near(p.v, 2.2));
+        const target = dist < 3.2 || someone ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.open * 1.55;
       }
       for (const z of town.doorZones) {
         if (player.pos.x > z.x0 && player.pos.x < z.x1 && player.pos.z > z.z0 && player.pos.z < z.z1) {
@@ -510,26 +501,23 @@ async function start() {
       if (nearHouse && $('card').dataset.coord !== nearHouse.house.coordinate) { showCard(nearHouse.house); $('card').dataset.coord = nearHouse.house.coordinate; }
       if (!nearHouse && $('card').dataset.coord) { $('card').hidden = true; delete $('card').dataset.coord; }
       // House name boards are created only near the player to keep GPU memory low on phones.
-      const labelCull = lowPerf ? 42 : 55;
       for (const [c, l] of town.lots) {
         const d = Math.hypot(l.doorPos.x - player.pos.x, l.doorPos.z - player.pos.z), has = houseLabels.get(c);
         if (d < labelCull && !has) { const s = makeLabel(`${c} · ${l.house.name}`, 'house'); s.position.set(l.doorPos.x, 3.7, l.doorPos.z + 3.4); /* clear of colonnades and pagoda eaves */ town.group.add(s); houseLabels.set(c, s); }
         else if (d > labelCull + 15 && has) { town.group.remove(has); disposeLabel(has); houseLabels.delete(c); }
       }
-      const nearRelic=expedition.nearby(player.pos);
-      const away=(p)=>p?Math.hypot(player.pos.x-p.pos.x,player.pos.z-p.pos.z):Infinity;
-      const relicD=away(nearRelic), npcD=away(nearNPC), personD=away(nearPerson), guideD=nearGuide?Math.hypot(player.pos.x-town.guidePos.x,player.pos.z-town.guidePos.z):Infinity;
-      $('prompt').hidden = (!nearNPC && !nearPerson && !nearHouse && !nearRelic && !nearGuide) || !!panelOpen || expedition.isOpen() || npcChat.isOpen() || !$('npc-roster').hidden;
-      if(nearRelic && relicD<=npcD && relicD<=personD && relicD<=guideD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ✨ ${nearRelic.id==='guild'?'Guild Chest':nearRelic.name}`;
-      else if (nearNPC && npcD<=personD && npcD<=guideD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — 💬 Talk to ${nearNPC.npc.name}`;
-      else if (nearGuide && guideD<=personD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — 🗺️ Read Town Guide`;
-      else if (nearPerson) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — 💬 ${nearPerson.label}`;
+      const nearRelic = expedition.nearby(player.pos), relicD = away(nearRelic), npcD = away(nearNPC), personD = away(nearPerson);
+      $('prompt').hidden = (!nearNPC && !nearPerson && !nearHouse && !nearRelic) || !!panelOpen || expedition.isOpen() || npcChat.isOpen() || !$('npc-roster').hidden;
+      if (nearRelic && relicD <= npcD && relicD <= personD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ✨ ${nearRelic.id === 'guild' ? 'Guild Chest' : nearRelic.name}`;
+      else if (nearNPC && npcD <= personD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — 💬 Talk to ${nearNPC.npc.name}`;
+      else if (nearPerson) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearPerson.v ? `Talk to ${nearPerson.v.name} (${nearPerson.v.job}) · ${nearPerson.v.activity.replace(/^(walking|cycling) — /, '')}` : nearPerson.label}`;
       else if (nearHouse) $('prompt').textContent = `${nearHouse.house.coordinate} · ${nearHouse.house.name} — walk through the door to enter`;
       if (input.consume('use')) use();
     } else {
+      // Inside doors swing open for the player and for residents walking through them.
       for (const d of inside.doors) {
         const dist = Math.hypot(d.userData.centre.x - player.pos.x, d.userData.centre.z - player.pos.z);
-        const residentNear = (inside.people || []).some((p) => Math.hypot(d.userData.centre.x - p.pos.x, d.userData.centre.z - p.pos.z) < 2.6);
+        const residentNear = (inside.people || []).some((p) => Math.hypot(d.userData.centre.x - p.pos.x, d.userData.centre.z - p.pos.z) < 2.0);
         const target = dist < 2.8 || residentNear ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.baseRot + d.userData.open * 1.5;
       }
       const ex = inside.exitZone;
@@ -539,7 +527,8 @@ async function start() {
         nearThing = pickNear();
         nearNPC = null;
         $('prompt').hidden = !nearThing || !!panelOpen || npcChat.isOpen() || !$('npc-roster').hidden;
-        if (nearThing) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.label}`;
+        const who = nearThing?.person && inside.people?.find((p) => p.key === nearThing.key);
+        if (nearThing) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.label}${who ? ` · ${who.activity}` : ''}`;
         if (input.consume('use')) use();
         animate(inside.dynamics, t, active);
         for (const p of inside.people || []) p.update(dt, t, player, p.plan);
@@ -562,8 +551,8 @@ async function start() {
   // Test hook: lets the browser test suite drive real gameplay deterministically.
   window.__town = {
     houses: houses.map((h) => ({ coordinate: h.coordinate, name: h.name })),
-    npcs: streetNPCs.map(x => ({id:x.npc.id,name:x.npc.name,coordinate:x.npc.coordinate})),
-    npcChat: () => ({open:npcChat.isOpen(),id:npcChat.active()}),
+    npcs: streetNPCs.map((x) => ({ id: x.npc.id, name: x.npc.name, coordinate: x.npc.coordinate })),
+    npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),
     talkTo: (id) => npcChat.show(id),
     travel,
     state: () => ({
@@ -572,7 +561,8 @@ async function start() {
       interactables: inside ? inside.interactables.map((x) => ({ key: x.key, label: x.label, title: x.act.title || x.label, do: x.act.do, room: x.roomName })) : [],
       near: nearThing?.key || null, nearNPC: nearNPC?.npc.id || null, nearHouse: nearHouse?.house.coordinate || null,
       panel: panelOpen ? { title: $('panel-title').textContent, text: $('panel-body').textContent, links: [...$('panel-actions').querySelectorAll('a')].map((a) => a.href), buttons: [...$('panel-actions').querySelectorAll('button')].map((b) => b.textContent) } : null,
-      people: (mode === 'town' ? villagers.map((v) => ({ key: v.key, name: v.walker.name, x: v.pos.x, z: v.pos.z, visible: v.walker.group.visible })) : (inside?.people || []).map((p) => ({ key: p.key, name: p.name, x: p.pos.x, z: p.pos.z }))),
+      people: (mode === 'town' ? townLife.people.map((p) => ({ key: p.key, name: p.v.name, job: p.v.job, x: p.v.x, z: p.v.z, inside: p.v.inside, activity: p.v.activity, visible: p.fig.group.visible })) : (inside?.people || []).map((p) => ({ key: p.key, name: p.name, x: p.pos.x, z: p.pos.z, room: p.room, activity: p.activity }))),
+      time: life.time(), day: life.day, minute: life.minute, speed: life.speed, daylight: life.daylight(), sound: ambience.on,
       nearPerson: nearPerson?.key || null,
       active: [...active], playing: playing?.id || null, gameSrc: playing ? $('game-frame').getAttribute('src') : null, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles,
     }),
@@ -596,8 +586,26 @@ async function start() {
     toExit() { if (!inside) return false; player.place(inside.spawn.x, inside.spawn.z, Math.PI); return true; },
     place(x, z, yaw) { player.place(x, z, yaw); },
     probe(x, z) { return world.hits(x, z, player.radius); },
-    // Stands next to the nearest villager, facing them (tests and the town guide).
-    meetVillager(i = 0) { const v = villagers[i]; if (!v) return null; player.place(v.pos.x + 1.4, v.pos.z, Math.PI / 2); return v.key; },
+    // Stands next to a villager who is out and about, facing them.
+    meetVillager(i = 0) {
+      // Prefers someone walking somewhere, so tests see them stop for the player.
+      const out = townLife.people.filter((p) => !p.v.inside).sort((a, b) => (b.v.path.length > 0) - (a.v.path.length > 0));
+      const p = out[i % Math.max(1, out.length)]; if (!p) return null;
+      if (mode === 'house') leave(false);
+      player.place(p.v.x + 1.4, p.v.z, Math.PI / 2); return p.key;
+    },
+    // Stands at the Town Guide kiosk, facing it.
+    meetGuide() { if (mode === 'house') leave(false); player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return 'guide'; },
+    goPlace,
+    life: {
+      ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
+      // Jumps the clock (tests): everyone re-plans their day from scratch.
+      setTime(minute) { life.minute = minute; life.stats = life.freshStats(); for (const v of life.villagers) { v.step = null; v.path = []; v.queue = []; v.doneToday = {}; } },
+      run(minutes) { for (let m = 0; m < minutes; m += 0.5) life.tick(0.5); },
+      speed(n) { life.speed = n; }, trucks: () => life.trucks.map((t) => ({ x: t.x, z: t.z, state: t.state, braking: !!t.braking, load: t.load })),
+      places: () => [...life.places.values()].map((p) => ({ id: p.id, name: p.name, stock: p.stock, out: p.out, growth: p.growth })),
+      parcels: () => life.parcels.length,
+    },
     play() { const b = $('panel-actions').querySelector('button.play'); if (b) b.click(); return !!b; },
     stopGame: () => stopGame(),
     answer(i) { const b = $('panel-actions').querySelectorAll('button')[i]; if (b) b.click(); return !!b; },
@@ -609,4 +617,3 @@ async function start() {
 }
 
 start().catch(fail);
-

@@ -18,13 +18,13 @@ const shared = {
 shared.pyramid.rotateY(Math.PI / 4);
 
 export const solidMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
-export const windowMaterial = new THREE.MeshLambertMaterial({ color: 0x9fd3ea, emissive: 0xffb85c, emissiveIntensity: 0 });
-export const lampMaterial = new THREE.MeshLambertMaterial({ color: 0xfff3c4, emissive: 0xffb84d, emissiveIntensity: 0.15 });
+// Window glass colour shared with exterior.js; a builder with `glass = []` sets those
+// panes aside so the town can light them at night (src/world/town.js).
+export const GLASS = 0x9fd3ea;
 
 export class Builder {
   constructor() {
     this.parts = [];
-    this.windows = [];
     this.dynamics = [];
     this.stack = [new THREE.Matrix4()];
   }
@@ -49,8 +49,7 @@ export class Builder {
     );
     g.applyMatrix4(this.matrix.clone().multiply(local));
     paint(g, color);
-    if (color === 0x9fd3ea) this.windows.push(g);
-    else this.parts.push(g);
+    (this.glass && color === GLASS ? this.glass : this.parts).push(g);
     return g;
   }
 
@@ -75,6 +74,14 @@ export class Builder {
     return mesh;
   }
 
+  // Merges loose geometries (e.g. collected glass) into one; null when there are none.
+  static merge(geometries) {
+    if (!geometries.length) return null;
+    const merged = mergeGeometries(geometries, false);
+    for (const g of geometries) g.dispose();
+    return merged;
+  }
+
   build() {
     const group = new THREE.Group();
     if (this.parts.length) {
@@ -82,14 +89,8 @@ export class Builder {
       for (const p of this.parts) p.dispose();
       group.add(new THREE.Mesh(merged, solidMaterial));
     }
-    if (this.windows.length) {
-      const mergedWin = mergeGeometries(this.windows, false);
-      for (const w of this.windows) w.dispose();
-      group.add(new THREE.Mesh(mergedWin, windowMaterial));
-    }
     for (const d of this.dynamics) group.add(d);
     this.parts = [];
-    this.windows = [];
     return group;
   }
 }

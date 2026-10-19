@@ -1,6 +1,5 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { Builder, lampMaterial } from './builder.js';
+import { Builder } from './builder.js';
 import { buildExterior } from './exterior.js';
 
 // Town layout: 26 columns (A–Z) × 8 rows (streets). Every house faces +z onto its
@@ -25,23 +24,12 @@ export function buildTown(scene, houses, streets) {
   group.add(ground);
 
   const deco = new Builder();
-  const lampGlobes = [];
-  const globeGeo = new THREE.SphereGeometry(0.28, 8, 6);
   for (let r = 0; r < 8; r++) {
     const z = r * LOT_Z - 3.5 * LOT_Z + 16;
     deco.box(0x4b4f55, width - 40, 0.04, 9, 0, 0.02, z);
     for (let i = 0; i < 60; i++) deco.box(0xf2efe6, 2.2, 0.05, 0.2, -width / 2 + 30 + i * (width - 60) / 60, 0.03, z);
     deco.box(0xc9c4b8, width - 40, 0.08, 1.6, 0, 0.04, z - 5.3);
     deco.box(0xc9c4b8, width - 40, 0.08, 1.6, 0, 0.04, z + 5.3);
-    // Streetlamps along each street verge (clear of sidewalks and avenues)
-    for (let c = 1; c < COLS; c += 3) {
-      const lx = (c - (COLS - 1) / 2) * LOT_X + 9.5, lz = z - 6.6;
-      deco.cyl(0x2d333b, 0.09, 3.8, lx, 1.9, lz);
-      deco.box(0x2d333b, 0.35, 0.12, 0.35, lx, 3.8, lz);
-      const g = globeGeo.clone();
-      g.translate(lx, 4.05, lz);
-      lampGlobes.push(g);
-    }
   }
   // Cross avenues every 5 columns so the grid is walkable without zig-zagging between yards.
   for (let c = 0; c <= COLS; c += 5) deco.box(0x55595f, 7, 0.035, depth - 20, (c - COLS / 2) * LOT_X, 0.018, 0);
@@ -49,25 +37,42 @@ export function buildTown(scene, houses, streets) {
   for (let i = 0; i < 70; i++) {
     for (const z of [-depth / 2 - 6, depth / 2 + 6]) { const x = -width / 2 + i * width / 70; deco.cyl(0x6a4a2a, 0.3, 3, x, 1.5, z); deco.ball([0x4e8a46, 0x5a9a50, 0x467e40][i % 3], 2.2, x, 4.2, z); }
   }
-  // Town Guide kiosk at the starting square (between M4 road and sidewalk, no collider so walkers pass freely)
+  // Street lamps on both footpaths: poles merge into the street mesh, the lamp heads into
+  // one mesh that glows at night (no real lights, so phones pay nothing extra).
+  const heads = new Builder(); heads.glass = [];
+  for (let r = 0; r < 8; r++) {
+    const z = r * LOT_Z - 3.5 * LOT_Z + 16;
+    for (let x = -width / 2 + 36; x < width / 2 - 30; x += 26) {
+      for (const side of [-1, 1]) {
+        const lz = z + side * 6.0, lx = x + (side > 0 ? 13 : 0);
+        deco.cyl(0x2f3338, 0.08, 4.2, lx, 2.1, lz);
+        deco.box(0x2f3338, 0.08, 0.08, 0.9, lx, 4.15, lz - side * 0.4);
+        heads.box(0x9fd3ea, 0.42, 0.2, 0.42, lx, 4.0, lz - side * 0.85);
+      }
+    }
+  }
+  // Town Guide kiosk at the starting square (between the M4 road and the footpath; no
+  // collider, so people walk past it freely).
   const guideZ = lotPosition('M4').z + 12.8;
   deco.cyl(0x6b4a2e, 0.12, 1.8, 0, 0.9, guideZ);
   deco.box(0x3a5a78, 1.5, 1.0, 0.14, 0, 1.75, guideZ);
   deco.box(0xf4efe4, 1.32, 0.82, 0.16, 0, 1.75, guideZ);
   deco.box(0xd99b38, 1.62, 0.14, 0.24, 0, 2.3, guideZ);
   group.add(deco.build());
-  if (lampGlobes.length) {
-    const mergedLamps = mergeGeometries(lampGlobes, false);
-    for (const g of lampGlobes) g.dispose();
-    group.add(new THREE.Mesh(mergedLamps, lampMaterial));
-  }
+  const lampMat = new THREE.MeshLambertMaterial({ color: 0xfff1c8, emissive: 0xffd27a, emissiveIntensity: 0 });
+  const lamps = new THREE.Mesh(Builder.merge(heads.glass), lampMat);
+  group.add(lamps);
 
   // One mesh per house: frustum culling then skips houses behind or beyond the fog.
   const lots = new Map();
-  for (const h of houses) {
+  // Window glass goes into three town-wide meshes: households that go to bed early,
+  // late, and the night owls, so lights go out across town in stages (setNight).
+  const panes = [[], [], []];
+  for (const [n, h] of houses.entries()) {
     const lot = lotPosition(h.coordinate);
-    const hb = new Builder();
+    const hb = new Builder(); hb.glass = [];
     const fp = buildExterior(hb, h.ext, h.ext);
+    for (const g of hb.glass) { g.translate(lot.x, 0, lot.z); panes[(n * 7) % 10 < 5 ? 0 : (n * 7) % 10 < 9 ? 1 : 2].push(g); }
     const mesh = hb.build();
     mesh.position.set(lot.x, 0, lot.z);
     group.add(mesh);
@@ -93,8 +98,17 @@ export function buildTown(scene, houses, streets) {
     coordinate: house.coordinate, x0: doorPos.x - fp.door.w / 2 + 0.15, x1: doorPos.x + fp.door.w / 2 - 0.15, z0: doorPos.z - 0.1, z1: doorPos.z + 0.6,
   }));
 
-  const guidePos = new THREE.Vector3(0, 0, guideZ);
-  return { group, ground, colliders, lots, doors, doorZones, streets, guidePos, bounds: { width, depth } };
+  const windowMats = panes.map(() => new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xffb45a, emissiveIntensity: 0 }));
+  panes.forEach((p, i) => { const g = Builder.merge(p); if (g) group.add(new THREE.Mesh(g, windowMats[i])); });
+  // dark: 0 by day … 1 at night. minute: town clock, for bedtimes and early risers.
+  function setNight(dark, minute) {
+    const h = minute / 60;
+    const on = [h < 22 || h >= 5.5, h < 23.5 || h >= 6, true];
+    windowMats.forEach((m, i) => { m.emissiveIntensity = on[i] ? dark * 0.95 : dark * 0.05; });
+    lampMat.emissiveIntensity = dark > 0.25 ? 1.2 : 0;
+  }
+
+  return { group, ground, colliders, lots, doors, doorZones, streets, guidePos: new THREE.Vector3(0, 0, guideZ), bounds: { width, depth }, setNight };
 }
 
 // Street-name signs at both ends of each street, plus the Town Guide sign near spawn.
