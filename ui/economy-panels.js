@@ -8,7 +8,7 @@ const dollar=n=>'$'+Number(n||0).toLocaleString('en-AU',{maximumFractionDigits:0
 export const accountSummary=life=>({cash:life.money.cash,everyday:life.money.checking,
  savings:life.money.savings,total:life.money.total,method:life.money.payment});
 export function walletPanel(life){
- const m=life.money,receipt=m.receipts.slice(0,9).map(x=>'<tr><td>Day '+x.day+'</td><td>'+esc(x.description)+'</td><td>'+dollar(x.amount)+'</td></tr>').join('');
+ const m=life.money,finance=life.finance,receipt=m.receipts.slice(0,9).map(x=>'<tr><td>Day '+x.day+'</td><td>'+esc(x.description)+'</td><td>'+dollar(x.amount)+'</td></tr>').join('');
  const bag=Object.entries(m.playerBag).filter(([k,n])=>n>0).map(([k,n])=>esc(k)+' × '+n).join(', ')||'None yet';
  return {
   title:'💳 Wallet & money',wide:true,
@@ -16,13 +16,20 @@ export function walletPanel(life){
     ' · <b>Savings:</b> '+dollar(m.savings)+'</p><p><b>Total money:</b> '+dollar(m.total)+
     ' · <b>Paying by:</b> '+esc(m.payment==='card'?'card (everyday account)':'cash')+
     ' · <b>Job income:</b> '+dollar(m.earned)+' · <b>Purchases:</b> '+dollar(m.spent)+'</p>'+
-    '<p><b>Owned groceries:</b> '+bag+'</p>'+
+    '<p><b>Owned groceries:</b> '+bag+'</p><p><b>Energy:</b> '+finance.playerEnergy+'/100 · <b>Rent overdue:</b> '+dollar(finance.playerRentArrears)+' · <b>Power overdue:</b> '+dollar(finance.playerUtilityArrears)+'</p>'+
     '<p class="dim">Player starts with $60 cash, $100 everyday and $40 savings. Buying actually deducts funds. Banking and paid jobs are available in town. Money is fictional game currency, saved only on this device.</p>'+
     '<h3>Recent transactions</h3><table class="ledger"><tr><th>When</th><th>Memo</th><th>Change</th></tr>'+receipt+'</table>',
   actions:[
     {label:m.payment==='card'?'Pay cash at shops instead':'Pay by card at shops instead',
       run:()=>{m.setPayment(m.payment==='card'?'cash':'card');return walletPanel(life)}},
     {label:'💼 See available paid jobs',run:()=>jobBoardPanel(life)},
+    {label:'📊 Town budgets and accounts',run:()=>townBudgetPanel(life)},
+    ...Object.keys(m.playerBag).filter(k=>m.playerBag[k]>0&&['bread','pie','eggs','milk','veg','fruit','lamb'].includes(k)).slice(0,5).map(food=>({
+      label:'🍽 Eat '+food,run:()=>{
+        const done=finance.eat(food),p=walletPanel(life);
+        p.body='<p><b>'+esc(done.message)+'</b></p>'+p.body;return p
+      }
+    })),
   ]
  };
 }
@@ -57,7 +64,7 @@ export function bankPanel(life){
       }
     });
   },
-  actions:[{label:'💳 View wallet and transactions',run:()=>walletPanel(life)}]
+  actions:[{label:'💳 View wallet and transactions',run:()=>walletPanel(life)},{label:'🏦 Member loans and repayments',run:()=>loanPanel(life)}]
  };
 }
 export function jobBoardPanel(life,go){
@@ -123,4 +130,67 @@ export function workTaskPanel(life,site,taskKey){
     {label:'💼 Work shift progress',run:()=>jobPanel(life,site)}
   ]
  };
+}
+
+
+export function loanPanel(life){
+ const f=life.finance,loan=f.loan,audit=f.audit(),m=life.money;
+ const desc=loan?
+  'Outstanding principal: '+dollar(loan.principal)+
+  ' · Accrued interest: '+dollar(audit.interestAccrued)+
+  ' · Due Day '+loan.due+(loan.lateDays?' · '+loan.lateDays+' days overdue':''):
+  'No current loan.';
+ const actions=[];
+ if(!loan){
+  for(const amount of [100,200,400])actions.push({label:'Apply for $'+amount+' funded loan',run:()=>{
+    const result=f.borrow(amount);const p=loanPanel(life);
+    p.body='<p><strong>'+esc(result.message)+'</strong></p>'+p.body;return p;
+  }});
+ }else{
+  for(const amount of [25,100,loan.principal+audit.interestAccrued]){
+   if(amount<=0)continue;
+   actions.push({label:'Repay '+dollar(amount),run:()=>{
+    const result=f.repay(amount),p=loanPanel(life);
+    p.body='<p><strong>'+esc(result.message)+'</strong></p>'+p.body;return p;
+   }});
+  }
+ }
+ actions.push({label:'Back to bank',run:()=>bankPanel(life)});
+ return {title:'🏦 Community bank lending',wide:true,
+ body:'<p><strong>'+esc(desc)+'</strong></p>'+
+  '<p><b>Bank capital available:</b> '+dollar(f.bankCapital)+
+  ' · <b>Everyday account:</b> '+dollar(m.checking)+
+  ' · <b>Member loan rate:</b> 8% per year; 30 town-day term.</p>'+
+  '<p>Complete a paid shift to qualify. The bank lends from a finite $5,000 pre-funded capital pool, not newly minted currency. '+
+  'Missed repayments remain overdue and prevent additional borrowing. Interest accrues but is paid only from actual account funds. '+
+  'This is a simplified fictional credit union, not a real regulated Australian bank.</p>',
+ actions};
+}
+export function townBudgetPanel(life){
+ const f=life.finance,a=f.audit(),entries=a.currentEntries.slice(0,18);
+ const rows=entries.map(x=>'<tr><td>Day '+x.day+'</td><td>'+esc(x.memo)+'</td><td>'+
+  esc(x.debit)+' → '+esc(x.credit)+'</td><td>'+dollar(x.amount)+'</td></tr>').join('');
+ const businesses=[...life.places.values()].filter(p=>p.kind!=='farmhouse').map(p=>({
+  name:p.name,funds:(p.till||0)+(p.operating||0),daily:p.dailyExpenses||0,
+  lifetime:p.lifetimeExpenses||0,unpaid:p.unpaidBills||0
+ }));
+ return {title:'📊 Town economic accounts',wide:true,
+ body:'<p><b>Money held across the town:</b> '+dollar(a.moneySupply)+
+ ' · <b>Council cash:</b> '+dollar(life.treasury)+
+ ' · <b>Bank capital:</b> '+dollar(a.bankCapital)+
+ ' · <b>Deposits backed:</b> '+(a.depositsBacked?'Yes':'NO — reconciliation failure')+'</p>'+
+ '<h3>Today’s local-government receipts</h3>'+
+ '<p>Rates: '+dollar(f.daily.rates)+' · Utilities: '+dollar(f.daily.utilities)+
+ ' · Housing rent: '+dollar(f.daily.rent)+' · Income tax: '+dollar(f.daily.tax)+'</p>'+
+ '<p>Unpaid invoices/arrears outstanding: '+dollar(f.daily.unpaidBills)+
+ ' · Player rent owed: '+dollar(f.playerRentArrears)+
+ ' · Player power owed: '+dollar(f.playerUtilityArrears)+'</p>'+
+ '<h3>Businesses: cash, operating costs and unpaid bills</h3>'+
+ '<table class="ledger"><tr><th>Business</th><th>Funds</th><th>Daily charges</th><th>Bills owed</th></tr>'+
+ businesses.map(x=>'<tr><td>'+esc(x.name)+'</td><td>'+dollar(x.funds)+'</td><td>'+
+ dollar(x.daily)+'</td><td>'+dollar(x.unpaid)+'</td></tr>').join('')+'</table>'+
+ '<h3>Double-entry transfers (new economic systems)</h3>'+
+ '<table class="ledger"><tr><th>Day</th><th>Memo</th><th>From → To</th><th>Amount</th></tr>'+rows+'</table>'+
+ '<p class="dim">The journal covers new tax, loan, rent and operating-charge flows. Older payroll, stock purchases and supplier payments still use the legacy accounting pathway, so these are not yet full audited double-entry business statements.</p>',
+ actions:[{label:'💳 My wallet',run:()=>walletPanel(life)}]};
 }
