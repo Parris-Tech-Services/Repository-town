@@ -30,8 +30,8 @@ assert.equal(m.bank('withdraw',100000,town.day).ok,false);
 assert.equal(m.bank('deposit',-2,town.day).ok,false);
 assert.equal(m.bank('deposit',1.5,town.day).ok,false);
 // Restore balance through reversible accounting so the total supply stays fixed.
-m.checking=85;m.bankVault=125;
-assert.equal(sum(),initial); // previous 85 after buying two more products
+m.checking=83;m.bankVault=123;
+assert.equal(sum(),initial); // original balance after a $5 bread, $5 cafe and $7 pie
 assert(m.bank('deposit',20,town.day).ok);
 assert.equal(m.cash,40);assert.equal(m.checking,105);
 assert(m.bank('save',40,town.day).ok);assert.equal(m.savings,80);
