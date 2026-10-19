@@ -2,6 +2,8 @@ import { locateVillager } from './npc-location.js';
 // Panels for town life: shop counters, farms, the Town Ledger and the town guide, plus
 // the gossip and Expedition relic hints villagers share in conversation (src/ui/npc.js).
 import { GOODS, amount, timeText } from '../world/life.js';
+import {JOB_BOARD} from '../world/money.js';
+import {walletPanel,bankPanel,jobPanel,jobBoardPanel} from './economy-panels.js';
 import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
 import { esc } from './interactions.js';
 
@@ -51,29 +53,36 @@ export function placePanel(life, id, onBuy) {
     if (id === 'bakery') rows.push(`<p><b>Out the back:</b> ${esc(list(p.stock))}</p>`);
     if (id === 'mill') rows.push(`<p><b>Ready to go:</b> ${esc(list(p.out))}</p>`);
     if (id === 'depot') rows.push(`<p><b>On the platform:</b> ${esc(list(p.out))}</p><p><b>Trucks:</b> ${life.trucks.map((t) => esc(`${t.driver?.name || 'Spare truck'} — ${t.state}`)).join('<br>')}</p>`);
-    if (p.till) rows.push(`<p><b>Takings so far:</b> $${p.till}</p>`);
+    rows.push(`<p><b>Cash register:</b> $${p.till||0} · <b>Operating funds:</b> $${p.operating||0} · <b>Gross sales:</b> $${p.grossSales||0}</p>`);
   }
+  rows.push(`<p><b>Your wallet:</b> $${life.money.cash} cash · $${life.money.checking} on card · Paying by ${life.money.payment}. A purchase now deducts funds.</p>`);
   rows.push(`<p><b>Working here:</b> ${staff.length ? staff.map((v) => esc(`${v.name} (${v.job}, ${timeText(v.start)}–${timeText(v.end)})${here.includes(v) ? ' — here now' : ''}`)).join(', ') : 'nobody'}</p>`);
   if (visitors.length) rows.push(`<p><b>Here now:</b> ${visitors.map((v) => esc(`${v.name}, ${v.activity}`)).join('; ')}</p>`);
   if (id === 'square' || id === 'hall') rows.push(`<h3>Town news</h3><ul class="news">${life.news(8).map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`);
   const shelves = id === 'bakery' ? p.out : p.stock;
   const sells = { store: p.sells, bakery: p.sells, greengrocer: p.sells, butcher: p.sells, cafe: ['pie', 'bread'], pub: ['pie'] }[id] || [];
   const actions = sells.filter((g) => (shelves[g] || 0) > 0).slice(0, 4).map((g) => ({ label: `Buy ${GOODS[g].unit === 'pie' ? 'a pie' : `a ${GOODS[g].unit} of ${GOODS[g].name}`} ($${GOODS[g].price})`, run: () => onBuy(id, g) }));
-  if (id === 'hall') actions.unshift({ label: 'Open the Town Ledger', run: () => ledgerPanel(life) });
+  if(JOB_BOARD.some(j=>j.site===id))actions.unshift({label:'💼 Ask about paid shifts',run:()=>jobPanel(life,id)});
+  if(id==='hall'){
+    actions.unshift({label:'🏦 Community Bank teller',run:()=>bankPanel(life)});
+    actions.unshift({label:'Town Ledger',run:()=>ledgerPanel(life)});
+  }
+  actions.push({label:'💳 Wallet and payment method',run:()=>walletPanel(life)});
   return { title: `${p.name} · ${p.kind === 'farm' ? 'farm' : p.kind}`, body: rows.join(''), actions, wide: true };
 }
 
-export function buy(life, id, good) {
-  const p = life.place(id), shelves = id === 'bakery' ? p.out : p.stock;
-  if (!life.open(p)) return { title: p.name, body: `<p>The ${esc(p.name)} is closed — it opens at ${esc(timeText(p.opens))}.</p>` };
-  if (!(shelves[good] > 0)) return { title: p.name, body: `<p>Sorry, sold out of ${esc(GOODS[good].name)}. The next truck should bring more.</p>` };
-  shelves[good]--; p.till += GOODS[good].price;
-  life.stats.sold[good] = (life.stats.sold[good] || 0) + 1;
-  const taste = { bread: 'still warm from the oven', pie: 'a proper meat pie, peppery and hot', veg: 'crisp and fresh from the garden', fruit: 'sweet and picked this week', eggs: 'a dozen free-range eggs', milk: 'cold and creamy', lamb: 'wrapped in butcher\'s paper', coffee: 'smells amazing', tea: 'a tin of strong breakfast tea', flour: 'a sack of the mill\'s own flour' }[good] || '';
-  life.log(`A visitor bought ${GOODS[good].name} at the ${p.name}.`);
-  return { title: p.name, body: `<p>You buy ${esc(amount(good, 1))} — ${esc(taste)}. $${GOODS[good].price} goes in the till.</p><p class="dim">Left on the shelves: ${shelves[good]}.</p>` };
+export function buy(life,id,good){
+  const shop=life.place(id),result=life.payPlayerPurchase(id,good),wallet=life.money;
+  if(!result.ok)return {title:shop?.name||'Shop',
+    body:'<p><b>'+esc(result.message)+'</b></p><p>Cash: $'+wallet.cash+' · Card: $'+wallet.checking+' · Savings: $'+wallet.savings+'</p>',
+    actions:[{label:'💳 Wallet',run:()=>walletPanel(life)},{label:'Back to shop',run:()=>placePanel(life,id,(site,item)=>buy(life,site,item))}]};
+  const flavour={bread:'freshly baked',pie:'hot pie',veg:'local produce',fruit:'seasonal fruit',eggs:'a dozen eggs',milk:'Dairy milk',lamb:'butcher-cut lamb',coffee:'beans',tea:'tea',flour:'mill flour'}[good]||'';
+  return {title:shop.name+' · receipt',
+    body:'<p>You bought '+esc(amount(good,1))+' · '+esc(flavour)+'.</p><p><b>'+esc(result.message)+'</b></p>'+
+    '<p><b>Remaining stock:</b> '+result.remaining+' · <b>Cash:</b> $'+wallet.cash+' · <b>Card:</b> $'+wallet.checking+'</p>',
+    actions:[{label:'Continue shopping',run:()=>placePanel(life,id,(site,item)=>buy(life,site,item))},
+      {label:'💳 Wallet',run:()=>walletPanel(life)}]};
 }
-
 export function ledgerPanel(life) {
   const L = life.ledger(), s = L.stats;
   const n = (o) => Object.entries(o).map(([g, k]) => esc(amount(g, k))).join(', ') || 'none yet';
