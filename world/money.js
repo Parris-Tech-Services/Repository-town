@@ -138,6 +138,13 @@ export class TownMoney {
   this.log(life.day,'work','Completed '+taskKey+' for '+def.name,0);
   return {ok:true,message:'Completed '+taskKey.replace(/-/g,' ')+'. '+shift.doneTasks.length+'/'+def.tasks.length+' duties done.'};
  }
+ abandonJob(life){
+  const shift=this.current(life.day);
+  if(!shift)return {ok:false,message:'No active paid shift to abandon.'};
+  this.log(life.day,'employment','Abandoned '+this.jobById(shift.id)?.name,0);
+  this.activeJob=null;
+  return {ok:true,message:'Shift abandoned. No wage paid. You can apply again today.'};
+ }
  finishJob(life,atSite){
   const task=this.current(life.day);
   if(!task)return {ok:false,message:'You have no active shift.'};
