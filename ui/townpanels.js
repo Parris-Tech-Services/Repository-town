@@ -3,7 +3,7 @@ import { locateVillager } from './npc-location.js';
 // the gossip and Expedition relic hints villagers share in conversation (src/ui/npc.js).
 import { GOODS, amount, timeText } from '../world/life.js';
 import {JOB_BOARD} from '../world/money.js';
-import {walletPanel,bankPanel,jobPanel,jobBoardPanel} from './economy-panels.js';
+import {walletPanel,bankPanel,jobPanel,jobBoardPanel,townBudgetPanel} from './economy-panels.js';
 import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
 import { esc } from './interactions.js';
 
@@ -101,10 +101,15 @@ export function ledgerPanel(life) {
       <b>Council fund:</b> $${L.finance.treasury}</p>
       <p><b>Wages paid today:</b> $${L.finance.wagesPaid} · <b>Wages owed:</b> $${L.finance.wagesOwed} ·
       <b>Wholesale invoices settled:</b> $${L.finance.wholesale}</p>
-      <p class="dim">Town accounts are finite. Bank cash deposits, withdrawals and transfers are fully backed; loans and interest are not implemented.</p>
+      <p><b>Bank lending capital:</b> ${L.economy.bankCapital} · <b>Outstanding loan principal:</b> ${L.economy.loanPrincipal} ·
+      <b>Household rent overdue:</b> ${L.economy.rentArrears} · <b>Utilities overdue:</b> ${L.economy.utilityArrears} ·
+      <b>Town money supply:</b> ${L.economy.moneySupply}</p>
+      <p class="dim">Bank loans use pre-funded bank capital, and council collects rates, household expenses and wage taxes. View the full Town Budget for journal entries, business costs and arrears.</p>
       <h3>Farms</h3><table class="ledger"><tr><th>Farm</th><th>Crop</th><th>Waiting for pickup</th></tr>${L.farms.map((f) => `<tr><td>${esc(f.name)}</td><td>${Math.round(f.growth * 100)}% grown</td><td>${f.waiting} ${esc(f.makes)}</td></tr>`).join('')}</table>
       <h3>Trucks</h3><p>${L.trucks.map((t) => esc(`${t.driver || 'Spare'}: ${t.state}`)).join('<br>')}</p>
       <h3>News</h3><ul class="news">${L.news.map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`,
+    actions:[{label:'📊 Full economic accounts and council budgets',run:()=>townBudgetPanel(life)},
+      {label:'💳 My wallet',run:()=>walletPanel(life)}]
   };
 }
 
