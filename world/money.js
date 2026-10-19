@@ -3,12 +3,12 @@
 // are integer Town Dollars. Entirely local, fictional and not real banking.
 export const STARTING_FUNDS=Object.freeze({cash:60,checking:100,savings:40});
 export const JOB_BOARD=Object.freeze([
-  {id:'bakery-assistant',site:'bakery',name:'Bakery assistant',minutes:35,pay:24,description:'Help shape, tray and pack baked goods'},
-  {id:'farm-hand',site:'garden',name:'Market Garden hand',minutes:45,pay:30,description:'Water, weed and collect produce'},
-  {id:'depot-sorter',site:'depot',name:'Rail Depot parcel sorter',minutes:40,pay:28,description:'Sort incoming freight and secure parcels'},
-  {id:'store-stocker',site:'store',name:'General Store shelf stocker',minutes:35,pay:24,description:'Count stock, check dates and refill shelves'},
-  {id:'post-assistant',site:'post',name:'Post Office assistant',minutes:30,pay:22,description:'Sort letters into the delivery rounds'},
-  {id:'civic-cleaner',site:'hall',name:'Town Hall caretaker',minutes:35,pay:25,description:'Tidy public areas and inspect facilities'}
+  {id:'bakery-assistant',tasks:['wash-hands','prep-bench','cooling'],site:'bakery',name:'Bakery assistant',minutes:35,pay:24,description:'Help shape, tray and pack baked goods'},
+  {id:'farm-hand',tasks:['water-plants','weed-beds','pack-produce'],site:'garden',name:'Market Garden hand',minutes:45,pay:30,description:'Water, weed and collect produce'},
+  {id:'depot-sorter',tasks:['sort-freight','verify-manifest','stack-parcels'],site:'depot',name:'Rail Depot parcel sorter',minutes:40,pay:28,description:'Sort incoming freight and secure parcels'},
+  {id:'store-stocker',tasks:['check-expiry','refill-shelves','count-stock'],site:'store',name:'General Store shelf stocker',minutes:35,pay:24,description:'Count stock, check dates and refill shelves'},
+  {id:'post-assistant',tasks:['sort-mail','label-parcels','prepare-route'],site:'post',name:'Post Office assistant',minutes:30,pay:22,description:'Sort letters into the delivery rounds'},
+  {id:'civic-cleaner',tasks:['clean-floors','file-records','inspect-lighting'],site:'hall',name:'Town Hall caretaker',minutes:35,pay:25,description:'Tidy public areas and inspect facilities'}
 ]);
 const goodAmount=n=>Number.isSafeInteger(n)&&n>0&&n<=1000000;
 const trunc=n=>Number.isSafeInteger(n)&&n>=0?n:0;
@@ -108,7 +108,7 @@ export class TownMoney {
   if(!supervisor)return {ok:false,message:'There is no supervisor on shift. Try during staffed hours.'};
   const funds=life.isPublicPayroll(job.site)?life.treasury:trunc(p.till)+trunc(p.operating);
   if(funds<job.pay)return {ok:false,message:'This employer does not have enough funds for a paid shift.'};
-  this.activeJob={id,site:job.site,day:life.day,worked:0,required:job.minutes,pay:job.pay};
+  this.activeJob={id,site:job.site,day:life.day,worked:0,required:job.minutes,pay:job.pay,doneTasks:[],lastTaskAt:0};
   this.log(life.day,'employment','Started '+job.name,0);
   return {ok:true,message:job.name+' started. Work on site for '+job.minutes+' town minutes; then collect your pay.'};
  }
@@ -121,12 +121,30 @@ export class TownMoney {
   job.worked=Math.min(job.required,job.worked+townMinutes);
   return job.worked>=job.required;
  }
+ performTask(life,atSite,taskKey){
+  const shift=this.current(life.day);
+  if(!shift||shift.site!==atSite)return {ok:false,message:'Clock in at this workplace before taking on duties.'};
+  const def=this.jobById(shift.id);
+  if(!def?.tasks?.includes(taskKey))return {ok:false,message:'That task is not part of your current job.'};
+  if(shift.doneTasks.includes(taskKey))return {ok:false,message:'This duty is already checked off.'};
+  if(!life.open(life.place(atSite)))return {ok:false,message:'The work site is closed.'};
+  const supervisor=life.villagers.some(v=>v.work===atSite&&v.step?.kind==='work'&&!v.path?.length);
+  if(!supervisor)return {ok:false,message:'Wait for a supervisor to be present.'};
+  const now=life.day*1440+life.minute;
+  if(shift.lastTaskAt&&now-shift.lastTaskAt<5)
+    return {ok:false,message:'Work on this duty for at least five town minutes before the next task.'};
+  shift.doneTasks.push(taskKey);
+  shift.lastTaskAt=now;
+  this.log(life.day,'work','Completed '+taskKey+' for '+def.name,0);
+  return {ok:true,message:'Completed '+taskKey.replace(/-/g,' ')+'. '+shift.doneTasks.length+'/'+def.tasks.length+' duties done.'};
+ }
  finishJob(life,atSite){
   const task=this.current(life.day);
   if(!task)return {ok:false,message:'You have no active shift.'};
   const work=this.jobById(task.id);
   if(!work||atSite!==work.site)return {ok:false,message:'Return to your workplace to clock out.'};
   if(task.worked+0.001<task.required)return {ok:false,message:'You have worked '+Math.floor(task.worked)+' of '+task.required+' town minutes.'};
+  if((task.doneTasks||[]).length<3)return {ok:false,message:'Complete the remaining workplace duties before clocking out ('+(task.doneTasks||[]).length+'/3 done).'};
   const p=life.place(work.site);
   if(life.isPublicPayroll(work.site)){
    if(life.treasury<work.pay)return {ok:false,message:'Council payroll is temporarily short of funds.'};
@@ -169,7 +187,9 @@ export class TownMoney {
       Number.isFinite(s.activeJob.worked)&&s.activeJob.worked>=0){
    const def=this.jobById(s.activeJob.id);
    this.activeJob={id:def.id,site:def.site,day:s.activeJob.day,
-    worked:Math.min(def.minutes,s.activeJob.worked),required:def.minutes,pay:def.pay};
+    worked:Math.min(def.minutes,s.activeJob.worked),required:def.minutes,pay:def.pay,
+    doneTasks:[...new Set((Array.isArray(s.activeJob.doneTasks)?s.activeJob.doneTasks:[]).filter(t=>def.tasks.includes(t)))],
+    lastTaskAt:Number.isFinite(s.activeJob.lastTaskAt)?s.activeJob.lastTaskAt:0};
   }else this.activeJob=null;
  }
 }
