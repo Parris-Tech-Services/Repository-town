@@ -258,7 +258,7 @@ export function npcBehaviour(x, ctx) {
   const id = x.act.role === 'villager' ? `villager:${name}` : house.coordinate;
   const job = ctx.town?.()?.self?.job;
   return {
-    title: x.act.role === 'villager' ? `${name} · ${job ? `${job} · ` : ''}lives at ${house.coordinate} · ${house.name}` : `${name} · resident of ${house.name}`,
+    title: ctx.workplace ? `${name} · ${x.act.job||job||'shopkeeper'} · ${ctx.workplace}` : x.act.role === 'villager' ? `${name} · ${job ? `${job} · ` : ''}lives at ${house.coordinate} · ${house.name}` : `${name} · resident of ${house.name}`,
     body: `<div class="chat"><p class="chat-location dim" aria-live="polite"></p><div class="chat-log" aria-live="polite"></div>
       <div class="chat-chips">
         <button type="button" class="chat-chip" data-ask="Any relic hints for the Adventure Guild?">🧭 Relic hint</button>
