@@ -408,13 +408,15 @@ async function start() {
   const saved = loadSave();
   if (saved?.pos) {
     for (const c of saved.visited || []) visited.add(c);
-    if (saved.inside && byCoord.has(saved.inside)) { enter(saved.inside); player.place(saved.pos.x, saved.pos.z, saved.yaw); }
+    if (saved.insideShop && life.places.has(saved.insideShop)) {
+      enterShop(saved.insideShop);player.place(saved.pos.x,saved.pos.z,saved.yaw);
+    } else if (saved.inside && byCoord.has(saved.inside)) { enter(saved.inside); player.place(saved.pos.x, saved.pos.z, saved.yaw); }
     else player.place(saved.pos.x, saved.pos.z, saved.yaw);
     if (world.hits(player.pos.x, player.pos.z, player.radius)) { if (mode === 'house') leave(false); spawn(); }
     status('Welcome back — your position was restored.');
   } else { spawn(); status('Welcome! Walk up to the Town Guide or any front door to begin.'); }
   let saveTimer = 0;
-  const save = () => writeSave({ pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, inside: inside?.house.coordinate || null, visited: [...visited] });
+  const save = () => writeSave({ pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, inside: inside&&!inside.place?inside.house.coordinate:null, insideShop:inside?.place?.id||null, visited: [...visited] });
   addEventListener('visibilitychange', () => { if (document.hidden) { save(); townLife.save(); } });
   addEventListener('pagehide', () => { save(); townLife.save(); });
   const syncSound = () => { $('btn-sound').textContent = ambience.on ? '🔊 Sound' : '🔇 Sound'; $('btn-sound').setAttribute('aria-pressed', String(ambience.on)); };
@@ -524,6 +526,19 @@ async function start() {
           if (d.userData.open > 0.6) { enter(z.coordinate); break; }
         }
       }
+      // Walk into an actual 3D shop interior when crossing the open shopfront.
+      // The outside facades are collision solids, so the transition happens
+      // just in front of their door (not inside an inaccessible wall).
+      if(mode==='town' && !overview){
+        for(const place of life.places.values()){
+          if(Math.abs(player.pos.x-place.x)<.93 &&
+             player.pos.z>=place.door.z-.12 &&
+             player.pos.z<=place.door.z+.92){
+            enterShop(place.id);
+            break;
+          }
+        }
+      }
       if (nearHouse && $('card').dataset.coord !== nearHouse.house.coordinate) { showCard(nearHouse.house); $('card').dataset.coord = nearHouse.house.coordinate; }
       if (!nearHouse && $('card').dataset.coord) { $('card').hidden = true; delete $('card').dataset.coord; }
       // House name boards are created only near the player to keep GPU memory low on phones.
@@ -623,6 +638,9 @@ async function start() {
     // Stands at the Town Guide kiosk, facing it.
     meetGuide() { if (mode === 'house') leave(false); player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return 'guide'; },
     goPlace,
+    shops:()=>[...life.places.values()].map(p=>({id:p.id,name:p.name,kind:p.kind,door:{x:p.x,z:p.door.z}})),
+    enterShop,
+    exitShop:()=>{if(!inside?.place)return false;leave();return true;},
     life: {
       ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
       // Jumps the clock (tests): everyone re-plans their day from scratch.
