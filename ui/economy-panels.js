@@ -80,7 +80,7 @@ export function jobPanel(life,site){
   ' · <b>Supervisor(s) present:</b> '+esc(working.map(w=>w.name).join(', ')||'none')+'</p>';
  if(active)body+='<p><b>Current shift:</b> '+esc(m.jobById(active.id)?.name||active.id)+
   ' · '+Math.floor(active.worked)+' / '+active.required+' town minutes worked · <b>Pay:</b> '+dollar(active.pay)+
-  '. Time counts only while physically working at the right location.</p>'+
+  '. Time counts only while physically working at the right location; the town clock stays at 1× while clocked in.</p>'+
   '<p><b>Duties:</b> '+(m.jobById(active.id)?.tasks||[]).map(k=>(active.doneTasks||[]).includes(k)?'✅ '+esc(k.replace(/-/g,' ')):'☐ '+esc(k.replace(/-/g,' '))).join(' · ')+'</p>';
  else body+='<p>No active shift. Choose work below. Pay is limited by the employer’s actual cash and operating account.</p>';
  body+='<p>Shifts completed today: '+m.workedToday(life.day)+' / 2. Unfinished shifts can be resumed today without restarting the timer.</p>';
@@ -94,6 +94,10 @@ export function jobPanel(life,site){
     const result=active.worked>=active.required?m.finishJob(life,site):{message:'Keep working here. '+Math.ceil(active.required-active.worked)+' minutes remaining.'};
     const p=jobPanel(life,site);p.body='<p><b>'+esc(result.message)+'</b></p>'+p.body;return p;
   }});
+ if(active)actions.push({label:'Cancel unfinished shift (no wages)',run:()=>{
+   const result=m.abandonJob(life);const p=jobPanel(life,site);
+   p.body='<p><b>'+esc(result.message)+'</b></p>'+p.body;return p;
+ }});
  actions.push({label:'💳 Check my wallet',run:()=>walletPanel(life)});
  return {title:'💼 Work at '+p.name,body,actions,wide:true};
 }
