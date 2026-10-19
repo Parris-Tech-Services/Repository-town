@@ -59,7 +59,7 @@ export function bakeryStationPanel(life,station='shelves',note=''){
  const roster=s.bakers.map(v=>esc(v.name+' ('+v.job+', '+(Math.floor(v.start/60))+':'+String(v.start%60).padStart(2,'0')+'–'+(Math.floor(v.end/60))+':'+String(v.end%60).padStart(2,'0')+')')).join(', ')||'No assigned staff';
  const msgText=note?'<p><strong>'+esc(note)+'</strong></p>':'';
  const body='<p>'+esc(msg)+'</p>'+msgText+
-  '<p><strong>Town time:</strong> '+esc(s.time())+', Day '+fmt(s.day)+
+  '<p><strong>Town time:</strong> '+esc(s.time)+', Day '+fmt(s.day)+
   ' · '+(s.bakeryOpen?'Shop open':'Shop closed')+
   ' · '+s.working.length+' baker(s) on shift now</p>'+
   '<h3>Real bakery inventory</h3>'+
