@@ -11,7 +11,7 @@ const {TownLife}=new Function('TownMoney','TownFinance',stripped(src('world/life
 const homes=Array.from({length:188},(_,i)=>({coordinate:String.fromCharCode(65+i%26)+(1+Math.floor(i/26)),
  name:'Repo '+i,door:{x:(i%26)*26,z:Math.floor(i/26)*46}}));
 const town=new TownLife({homes}),m=town.money;
-const sum=()=>town.treasury+m.total+town.villagers.reduce((total,v)=>total+v.wallet,0)+
+const sum=()=>town.treasury+town.finance.federalTreasury+town.finance.stateTreasury+m.total+town.villagers.reduce((total,v)=>total+v.wallet,0)+
  [...town.places.values()].reduce((total,p)=>total+(p.operating||0)+(p.till||0),0);
 const initial=sum();
 assert.deepEqual([m.cash,m.checking,m.savings,m.total,m.bankVault],[60,100,40,200,140]);
