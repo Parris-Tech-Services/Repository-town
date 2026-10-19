@@ -114,6 +114,16 @@ export function buildCivicInterior(site,makeLabel) {
   add('counter',deskName,'civic-ledger',deskInfo,0,-4.9);
   add('display',featureName,'info',featureInfo,-4.7,-3.45);
   add('notices','Town noticeboard','info','Ask the staff about '+site.name+'. Visit the service counter to open the Town Ledger.',4.7,-3.45);
+  if(site.id==='hall'){
+    // A small credit-union teller counter within Town Hall, not a pretend
+    // standalone bank building. Keep the main council desk open to visitors.
+    box(1.50,.82,.65,4.10,.41,-2.80,0x7a6551);
+    box(.82,.38,.08,4.10,1.10,-2.82,0x718791);
+    text('Community Bank',4.25,2.35,-2.5);
+    add('bank','Talk to the Community Bank teller','bank-service',
+      'Deposit cash, withdraw cash and move funds between everyday and savings. The bank is closed outside Town Hall hours.',
+      3.55,-2.05);
+  }
   placedProps.push({type:'counter',room:0},{type:'shelves',room:0},{type:'noticeboard',room:0});
   const rooms=[{name:roomTitle,x0:-EDGE,x1:EDGE,z0:BACK,z1:FRONT,w:BASE_W,d:BASE_D,parent:-1}];
   return {
