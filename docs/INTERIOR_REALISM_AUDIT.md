@@ -41,13 +41,34 @@ Australian reference designs:
 - Rural Australian Homestead: https://architecturerepublic.com.au/project/rural-australian-homestead/
 - Beagle Farm: https://www.cadenceandco.com.au/projects/beagle-farm/
 
-## Other 19 town-life interiors: not yet authentic
-They still use the common one-room counter/shelf template in world/shop-interior.js. Their town simulation and purchase UIs work, but geometry is generic.
+## Bakery at I8: completed custom first pass
+
+**Previous:** a generic one-room shop with a single counter.
+
+**Now:** eight distinct working spaces:
+1. Bread and pie sales frontage with trays, labelled bakery products, checkout and till.
+2. Accessible central circulation passage separating food production areas.
+3. Dough preparation with commercial spiral mixer, weighing and stainless prep benches.
+4. Hot line with two commercial deck ovens, landing bench, guards and oven status.
+5. Dedicated dough-proofing room with cabinet, racks and time/temperature notices.
+6. Cooling and packing with ventilation racks, trays, packing bench and delivery list.
+7. Dry flour and ingredient storage with sacks raised off the floor, stock and allergen notices.
+8. Wash-up and staff hygiene with deep sink, staff lockers, clean aprons and bins.
+
+**Named workers:** Gus at the sales counter and Hattie at dough preparation, from the existing TownLife worker roster. They have separate chat interactions.
+
+**Connected economy:** bakery equipment panels show live TownLife flour, eggs, milk, meat, vegetables, bread and pie stocks, opening times and assigned workers. The usual hourly automated flour-to-bread production is preserved. Visitors can try **one supervised batch per town day**, using two real flour bags, 40 simulated town minutes of proofing, 25 minutes in the oven, then eight saleable loaves counted in TownLife's bread inventory and baking statistics. The same state is persisted with normal TownLife saves to avoid duplicate collection. A glowing oven indicator reflects supervised baking.
+
+**Validation:** live Github Pages browser showed all eight rooms, 18 reachable interactions (16 equipment activities plus Gus/Hattie), enter and exit working, and farmhouse still showing ten rooms. Mocked production tests verified inventory consumption, time gates, duplicate prevention and resulting loaf count. Regression source: tests/bakery.mjs.
+
+**Still future work:** true steam and thermal physical effects, opening oven doors, animated mixing paddles, dough changing shape by fermentation, NPC movement between workstations that precisely tracks work shifts, actually cooled loaves moving between 3D shelves, full recipe/allergen database and a kitchen food-safety simulation. The game remains stylised low-poly, not photorealistic.
+
+## Other 18 town-life interiors: not yet authentic
+These sites still use the common one-room counter/shelf template in world/shop-interior.js. Their underlying town simulation and purchase UIs work, but their geometry is generic.
 
 | Building | Realism work needed |
 | --- | --- |
 | General Store | Different aisles, checkout, fridge cases, store room, stock delivery |
-| Bakery | Flour storage, mixing, proofing, ovens, cooling racks, sales counter, hygiene |
 | Café | Seats, coffee station, wash-up, cooking areas, staff zone and toilets |
 | Greengrocer | Produce displays, scales, backroom and chilled storage |
 | Butcher | Display fridge, clean cutting benches, cold room and sanitation |
@@ -69,4 +90,4 @@ They still use the common one-room counter/shelf template in world/shop-interior
 ### Acceptance criteria for each next building
 Function-specific floor plan, physical and usable assets, a believable staff workflow, collision-free navigation and exits, interactions tied to the actual economy where supported, save/resume on desktop and Android, and a real browser playtest. Do not overwrite the current public game with older JoshMemory source.
 
-**Suggested next: Bakery**, because the farm-to-flour-to-bread economy already runs in TownLife and can be turned into a real in-game production experience.
+**Suggested next: General Store**, with meaningful aisles, shelves that reflect actual stock, refrigerated food, a stockroom and goods arriving from the town freight system.
