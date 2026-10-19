@@ -61,7 +61,7 @@ export function placePanel(life, id, onBuy) {
   if (id === 'square' || id === 'hall') rows.push(`<h3>Town news</h3><ul class="news">${life.news(8).map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`);
   const shelves = id === 'bakery' ? p.out : p.stock;
   const sells = { store: p.sells, bakery: p.sells, greengrocer: p.sells, butcher: p.sells, cafe: ['pie', 'bread'], pub: ['pie'] }[id] || [];
-  const actions = sells.filter((g) => (shelves[g] || 0) > 0).slice(0, 4).map((g) => ({ label: `Buy ${GOODS[g].unit === 'pie' ? 'a pie' : `a ${GOODS[g].unit} of ${GOODS[g].name}`} ($${GOODS[g].price})`, run: () => onBuy(id, g) }));
+  const actions = sells.filter((g) => (shelves[g] || 0) > 0).map((g) => ({ label: `Buy ${GOODS[g].unit === 'pie' ? 'a pie' : `a ${GOODS[g].unit} of ${GOODS[g].name}`} ($${GOODS[g].price})`, run: () => onBuy(id, g) }));
   if(JOB_BOARD.some(j=>j.site===id))actions.unshift({label:'💼 Ask about paid shifts',run:()=>jobPanel(life,id)});
   if(id==='hall'){
     actions.unshift({label:'🏦 Community Bank teller',run:()=>bankPanel(life)});
