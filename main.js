@@ -573,6 +573,8 @@ async function start() {
       mode==='house'?inside?.place?.id:null);
     const clockText = `🕖 ${life.time()} · Day ${life.day}${life.speed > 1 ? ` · ${life.speed}×` : ''}`;
     if ($('clock').textContent !== clockText) $('clock').textContent = clockText;
+    const walletText='💰 $'+life.money.total;
+    if($('btn-wallet').textContent!==walletText)$('btn-wallet').textContent=walletText;
     syncTimeBtn();
     {
       let truck = Infinity; for (const tr of life.trucks) truck = Math.min(truck, Math.hypot(tr.x - player.pos.x, tr.z - player.pos.z));
