@@ -124,6 +124,23 @@ export function buildCivicInterior(site,makeLabel) {
       'Deposit cash, withdraw cash and move funds between everyday and savings. The bank is closed outside Town Hall hours.',
       3.55,-2.05);
   }
+  // Place three physical job tasks per workplace. Progress requires visiting
+  // these stations, not merely standing idle until a wage timer expires.
+  const duties={
+    store:[['check-expiry','Check product expiry dates'],['refill-shelves','Restock the grocery shelves'],['count-stock','Count stock and record inventory']],
+    garden:[['water-plants','Check irrigation and water plants'],['weed-beds','Remove weeds from vegetable beds'],['pack-produce','Pack vegetables for market']],
+    depot:[['sort-freight','Sort incoming freight'],['verify-manifest','Verify the goods manifest'],['stack-parcels','Stack and secure parcels']],
+    post:[['sort-mail','Sort mail into delivery rounds'],['label-parcels','Label outgoing parcels'],['prepare-route','Prepare the postie route']],
+    hall:[['clean-floors','Clean the public entrance'],['file-records','File council paperwork'],['inspect-lighting','Inspect public lighting']]
+  };
+  const spots=[[-3.45,1.4],[0,-2.35],[3.45,1.4]];
+  (duties[site.id]||[]).forEach(([task,label],i)=>{
+    const [x,z]=spots[i];
+    box(.78,.55,.70,x,.28,z,[0x8b967d,0xa88a67,0x7a9aa5][i]);
+    text(label,x,1.8,z);
+    add('duty-'+task,label,'job-task','Workplace duty for a paid town shift.',x,z+1.05);
+    interactables[interactables.length-1].act.jobTask=task;
+  });
   placedProps.push({type:'counter',room:0},{type:'shelves',room:0},{type:'noticeboard',room:0});
   const rooms=[{name:roomTitle,x0:-EDGE,x1:EDGE,z0:BACK,z1:FRONT,w:BASE_W,d:BASE_D,parent:-1}];
   return {
