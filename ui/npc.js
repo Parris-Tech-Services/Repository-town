@@ -8,9 +8,10 @@ import { recordPlayerMessage, recordTownAction, socialContext, socialGossip } fr
 
 const LEGACY_KEY_STORE = 'repository-town.groq-keys';
 const CODE_STORE = 'town-npc-code';
-// Public GitHub Pages cannot serve /api/npc-chat; direct visitors to the
-// existing protected Vercel playtest rather than accepting an unusable code.
-const STATIC_HOST = typeof location !== 'undefined' && /(^|\.)github\.io$/i.test(location.hostname);
+// GitHub Pages sends only the private PIN to a Cloudflare bridge. It forwards
+// to Vercel, where the Groq key stays server-side and the PIN is validated.
+const PAGES_HOST = typeof location !== 'undefined' && /(^|\.)github\.io$/i.test(location.hostname);
+const NPC_API = PAGES_HOST ? 'https://repository-town-ai-bridge.parris-neathaustralia.workers.dev/api/npc-chat' : '/api/npc-chat';
 const CHAT_STORE = 'repository-town.npc-chats';
 const ERRAND_STORE = 'repository-town.errands.v1';
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -36,7 +37,6 @@ export function setAccessCode(code) {
 }
 
 async function askResidentProxy(id, house, name, f, role, history) {
-  if (STATIC_HOST) throw Object.assign(new Error('static site has no AI server'), { code: 'static' });
   const accessCode = getAccessCode();
   if (!accessCode) throw Object.assign(new Error('no access code'), { code: 'nocode' });
   const personality = role === 'villager' ? villagerProfile(name) : null;
@@ -63,9 +63,9 @@ async function askResidentProxy(id, house, name, f, role, history) {
   };
   let res;
   try {
-    res = await fetch('/api/npc-chat', {
+    res = await fetch(NPC_API, {
       method: 'POST',
-      credentials: 'same-origin',
+      credentials: 'omit',
       headers: { 'Content-Type': 'application/json', 'x-npc-code': accessCode },
       body: JSON.stringify({
         npcId: id,
@@ -289,10 +289,6 @@ export function npcBehaviour(x, ctx) {
       });
       panel.classList.remove('chat-typing');
       const showBrain = () => {
-        if (STATIC_HOST) {
-          brain.innerHTML = 'This GitHub Pages copy has offline replies only. <a href="https://repository-town-claude-playtest.vercel.app/" target="_blank" rel="noopener noreferrer">Open the secure live-AI playtest ↗</a>';
-          return;
-        }
         const hasCode = Boolean(getAccessCode());
         brain.innerHTML = hasCode
           ? `Live AI enabled via server proxy (access code set for this tab). <a href="#" class="chat-forget">Clear access code</a>`
@@ -324,8 +320,7 @@ export function npcBehaviour(x, ctx) {
           reply = await askResidentProxy(id, house, name, facts, x.act.role, history);
         } catch (err) {
           reply = scripted(house, name, facts, text, x.act.role);
-          if (err.code === 'static') reply += ' (The secure playtest has live AI.)';
-          else if (err.code === 'badcode') { showBrain(); reply += ' (Incorrect access code, so a simple reply.)'; }
+          if (err.code === 'badcode') { showBrain(); reply += ' (Incorrect access code, so a simple reply.)'; }
           else if (err.code === 'offline') reply += ' (Offline, so a simple reply.)';
           else if (err.code === 'busy') reply += ' (AI service is busy right now, so a simple reply.)';
         }
