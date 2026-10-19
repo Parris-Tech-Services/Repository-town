@@ -568,29 +568,33 @@ export class TownLife {
 
   // Workers are paid at the end of each shift; the money comes back through the shops.
   pay(v){
-    const wage=WAGES[v.job]||45;
-    const payrollSite=this.place(v.work),tillBefore=payrollSite?.till||0,accountBefore=payrollSite?.operating||0;
+    const base=WAGES[v.job]||45;
+    const arrears=v.wageArrears||0;
+    const wage=(this.isPublicPayroll(v.work)?this.treasury:(this.place(v.work)?.till||0)+(this.place(v.work)?.operating||0))>=base+arrears
+      ?base+arrears:base;
     v.paidDay=this.day;
+    const p=this.place(v.work),beforeTill=p?.till||0,beforeOperating=p?.operating||0;
     if(this.payWageSource(v.work,wage)){
       v.wallet+=wage;this.stats.wagesPaid+=wage;
+      v.wageArrears=Math.max(0,arrears-(wage-base));
       if(this.isPublicPayroll(v.work)){
-        this.finance.record('council','npc:'+v.id,wage,'public payroll '+v.job);
+        this.finance.record('council','npc:'+v.id,wage,'public wages and arrears '+v.job);
         this.finance.daily.councilSpending+=wage;
         this.finance.lifetime.councilSpending+=wage;
-      }else if(payrollSite){
-        const cash=tillBefore-(payrollSite.till||0),bank=accountBefore-(payrollSite.operating||0);
-        if(cash>0)this.finance.record('register:'+payrollSite.id,'npc:'+v.id,cash,'wages '+v.job);
-        if(bank>0)this.finance.record('business:'+payrollSite.id,'npc:'+v.id,bank,'wages '+v.job);
-        payrollSite.payrollPaid=(payrollSite.payrollPaid||0)+wage;
+      }else if(p){
+        const cash=beforeTill-(p.till||0),bank=beforeOperating-(p.operating||0);
+        if(cash>0)this.finance.record('register:'+p.id,'npc:'+v.id,cash,'wages '+v.job);
+        if(bank>0)this.finance.record('business:'+p.id,'npc:'+v.id,bank,'wages '+v.job);
+        p.payrollPaid=(p.payrollPaid||0)+wage;
       }
       const withheld=this.finance.taxNpcWage(v,wage);
       if(withheld)this.log(v.name+' paid $'+withheld+' income tax to council.');
-
-      this.log(v.name+' was paid $'+wage+' from '+(this.isPublicPayroll(v.work)?'council':this.place(v.work)?.name)+'.');
+      if(wage>base)this.log(v.name+' received $'+(wage-base)+' of previously unpaid wages.');
+      this.log(v.name+' was paid $'+wage+' gross from '+(this.isPublicPayroll(v.work)?'council':p?.name)+'.');
     }else{
-      v.wageArrears=(v.wageArrears||0)+wage;
-      this.stats.wagesOwed+=wage;
-      this.log(v.name+' is owed $'+wage+' by '+(this.place(v.work)?.name||'the town')+'.');
+      v.wageArrears=arrears+base;
+      this.stats.wagesOwed+=base;
+      this.log(v.name+' is owed $'+v.wageArrears+' by '+(p?.name||'the town')+'.');
     }
   }
 
@@ -617,7 +621,8 @@ export class TownLife {
     this.day=s.day||1;this.minute=s.minute||7*60;
     if(Number.isSafeInteger(s.treasury)&&s.treasury>=0)this.treasury=s.treasury;
     this.money.restore(s.money);
-    this.finance.restore(s.finance);
+    if(s.finance)this.finance.restore(s.finance);
+    else this.finance.lastClosedDay=this.day; // do not back-bill users upgrading from old saves
     for(const [id,stock,out,till,growth,supervisedBatch,operating,grossSales,payrollPaid,costOfGoods,wholesaleRevenue,lifetimeExpenses,unpaidBills,dailyExpenses]of s.places||[]){const p=this.place(id);if(p)Object.assign(p,{stock,out,till,growth:growth??p.growth,supervisedBatch:supervisedBatch||null,operating:Number.isSafeInteger(operating)&&operating>=0?operating:p.operating,grossSales:Number.isSafeInteger(grossSales)&&grossSales>=0?grossSales:0,payrollPaid:payrollPaid||0,costOfGoods:costOfGoods||0,wholesaleRevenue:wholesaleRevenue||0,lifetimeExpenses:lifetimeExpenses||0,unpaidBills:unpaidBills||0,dailyExpenses:dailyExpenses||0});}
     for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears,housingArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0,housingArrears:housingArrears||0});}
   }
