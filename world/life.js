@@ -1,3 +1,4 @@
+import { TownMoney } from './money.js';
 // Town life simulation: the clock, farms, the mill and bakery, shops, trucks, the post,
 // and villagers with jobs, hunger, pantries, wallets and daily routines. Pure logic (no
 // three.js) so it runs and is tested on its own; src/world/townlife.js draws it.
@@ -11,6 +12,7 @@ export const LOT_X = 26, LOT_Z = 46;
 export const SEC_PER_MIN = 3;
 export const WALK = 1.5, BIKE = 4.5, DRIVE = 8;               // metres per real second
 const WAGES = { retired: 25, student: 10, mayor: 70, nurse: 60, teacher: 60, programmer: 65 };
+const PUBLIC_PAYROLL = new Set(['hall','school','clinic','post','depot','square']);
 const ROAD = (r) => r * LOT_Z - 3.5 * LOT_Z + 16;            // road centre line of street r (0-based)
 const lotX = (col) => (col - 12.5) * LOT_X;
 const LOT8_Z = 7 * LOT_Z - 3.5 * LOT_Z;                       // z of the street-8 lot centres
@@ -55,6 +57,8 @@ export const PLACE_DEFS = [
   { col: 'Y', id: 'silo', name: 'Wheat Farm', kind: 'farm', makes: 'grain', opens: 6 * 60, closes: 16 * 60 },
   { col: 'Z', id: 'farmhouse', name: 'Farmhouse', kind: 'home', opens: 0, closes: 24 * 60 },
 ];
+
+const WHOLESALE = Object.fromEntries(Object.entries(GOODS).map(([g,v]) => [g,v.price===0?0:Math.max(1,Math.floor(v.price*.55))]));
 
 const JOBS = [
   ['farmer', 'silo', 6 * 60, 16 * 60], ['farmer', 'garden', 6 * 60, 15 * 60], ['farmer', 'orchard', 7 * 60, 15 * 60],
@@ -142,13 +146,15 @@ export class TownLife {
     this.rand = rng(seed);
     this.day = 1; this.minute = minute;
     this.events = []; this.stats = this.freshStats();
+    this.money = new TownMoney();
+    this.treasury = 80000;
     this.places = new Map();
     for (const d of PLACE_DEFS) {
       const col = d.col.charCodeAt(0) - 65;
       const x = lotX(col);
       this.places.set(d.id, {
         ...d, x, door: { x, z: LOT8_Z + 7.5 }, front: { x, z: LOT8_Z + 9.3 }, curb: { x, z: ROAD(7) - 1.7 },
-        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till: 0, out: {},
+        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till:0, grossSales:0, operating:PUBLIC_PAYROLL.has(d.id)?0:4500, out:{},
       });
     }
     // Farms keep produce at the farm until a truck collects it; fields lie across the road.
@@ -175,7 +181,29 @@ export class TownLife {
     this.log(`Day ${this.day} begins. The town wakes up.`);
   }
 
-  freshStats() { return { harvested: {}, milled: 0, baked: 0, deliveries: 0, delivered: {}, sold: {}, meals: 0, mealsOut: 0, parcels: 0 }; }
+  freshStats(){return {harvested:{},milled:0,baked:0,deliveries:0,delivered:{},sold:{},meals:0,mealsOut:0,parcels:0,wagesPaid:0,wagesOwed:0,wholesale:0,playerWages:0}}
+  isPublicPayroll(site){return PUBLIC_PAYROLL.has(site)}
+  payWageSource(site,amount){
+    if(!Number.isSafeInteger(amount)||amount<=0)return false;
+    if(this.isPublicPayroll(site)){
+      if(this.treasury<amount)return false;
+      this.treasury-=amount;return true;
+    }
+    const p=this.place(site);
+    return p?TownMoney.debitBusiness(p,amount):false;
+  }
+  payPlayerPurchase(site,good){
+    const shop=this.place(site),inv=shop&&(site==='bakery'?shop.out:shop.stock);
+    if(!shop||!shop.sells?.includes(good)||!GOODS[good])return {ok:false,message:'Product not sold here.'};
+    if(!this.open(shop))return {ok:false,message:'Shop is currently closed.'};
+    if(!(inv[good]>0))return {ok:false,message:'Sold out of '+GOODS[good].name+'.'};
+    const payment=this.money.purchase(this.day,GOODS[good].price,shop,good);
+    if(!payment.ok)return payment;
+    inv[good]--;
+    this.stats.sold[good]=(this.stats.sold[good]||0)+1;
+    this.log('The player bought '+GOODS[good].name+' from '+shop.name+'.');
+    return {...payment,price:GOODS[good].price,remaining:inv[good]};
+  }
   place(id) { return this.places.get(id); }
   time() { return fmt(this.minute); }
   isDay() { return this.minute >= 6 * 60 && this.minute < 19 * 60; }
