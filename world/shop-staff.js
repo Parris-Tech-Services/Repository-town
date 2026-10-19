@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { makePerson, Walker } from './npcs.js';
 
 const SHIRTS={shop:0x557e9f,cafe:0x528c75,pub:0x9b6847,farm:0x71914e,clinic:0x77a7ac,school:0x6883b0,post:0x96745c};
-const HOST_NAMES={square:'Market Guide',farmhouse:'Farmhouse Host'};
+const HOST_NAMES={square:'Market Guide',farmhouse:'Nell'};
 
 export function populateShopStaff(site,life,interior,makeLabel){
   const workers=life.villagers.filter(v=>v.work===site.id);
@@ -12,7 +12,7 @@ export function populateShopStaff(site,life,interior,makeLabel){
   const worker=workers.find(v=>v.step?.kind==='work'&&v.step.at===site.id&&!v.path?.length)
     || workers[0] || null;
   const name=worker?.name||HOST_NAMES[site.id]||site.name+' Guide';
-  const job=worker?.job||(site.id==='farmhouse'?'farm resident':site.kind==='farm'?'farm guide':'visitor assistant');
+  const job=worker?.job||(site.id==='farmhouse'?'farmhouse resident':site.kind==='farm'?'farm guide':'visitor assistant');
   const home=site.id==='farmhouse';
   const pos=home?new THREE.Vector3(-5.20,0,-3.65):new THREE.Vector3(2.65,0,-8.25);
   const seed=[...site.id].reduce((x,ch)=>x+ch.charCodeAt(0),31);
