@@ -294,6 +294,7 @@ async function start() {
   // Time of day: jumps the town clock (src/world/life.js) to the next part of the day.
   const TIMES = [[7 * 60, '🌅 Morning'], [12 * 60, '☀️ Midday'], [18 * 60 + 40, '🌇 Dusk'], [22 * 60, '🌙 Night']];
   function cycleTime() {
+    if(life.money.current(life.day)){status('Finish or abandon your paid shift before skipping the town clock.');return;}
     const next = TIMES.find(([m]) => m > life.minute + 1) || TIMES[0];
     if (next[0] < life.minute) { life.day++; life.newDay(); }
     life.minute = next[0];
@@ -488,7 +489,7 @@ async function start() {
       chat: () => { closePanel(); npcChat.show(streetNPCs.find((n) => n.npc.id === 'rowan')?.npc || 'rowan', null); return null; },
       journal: () => { closePanel(); expedition.showJournal(); return null; },
       arcade: () => { travel('M5'); return null; },
-      speed: () => life.speed, setSpeed: (n) => { life.speed = n; townLife.save(); }, relic: () => relicsLeft()[0],
+      speed: () => life.speed, setSpeed: (n) => { life.speed = life.money.current(life.day)?1:n; townLife.save(); }, relic: () => relicsLeft()[0],
     });
   }
   function talkTo(p) {
@@ -574,6 +575,7 @@ async function start() {
 
     // The town keeps living while the player is indoors; the sky follows its clock.
     const talkingTo = panelOpen?.thing?.v ? panelOpen.thing : null;
+    if(life.money.current(life.day)&&life.speed!==1)life.speed=1;
     const moneyClockBefore=life.day*1440+life.minute;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo });
     // Wages accrue only for town minutes actually spent in the assigned
