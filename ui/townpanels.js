@@ -95,7 +95,13 @@ export function ledgerPanel(life) {
       <b>Deliveries:</b> ${s.deliveries} truckloads — ${n(s.delivered)}<br><b>Sold in shops:</b> ${n(s.sold)}<br>
       <b>Meals:</b> ${s.meals} eaten (${s.mealsOut} at the café and pub) · <b>Parcels delivered:</b> ${s.parcels}</p>
       ${y ? `<p class="dim">Yesterday: ${y.deliveries} deliveries, ${y.baked} baked, ${y.meals} meals, ${y.parcels} parcels.</p>` : ''}
-      <h3>Shops</h3><table class="ledger"><tr><th>Shop</th><th>Stock</th><th>Till</th></tr>${L.shops.map((p) => `<tr><td>${esc(p.name)} ${p.open ? '' : '<span class="dim">(closed)</span>'}</td><td>${esc(list(p.stock))}</td><td>$${p.till}</td></tr>`).join('')}</table>
+      <h3>Shops</h3><table class="ledger"><tr><th>Shop</th><th>Stock</th><th>Cash till</th><th>Operating account</th></tr>${L.shops.map((p) => `<tr><td>${esc(p.name)} ${p.open ? '' : '<span class="dim">(closed)</span>'}</td><td>${esc(list(p.stock))}</td><td>$${p.till}</td><td>$${p.operating}</td></tr>`).join('')}</table>
+      <h3>Town finance</h3>
+      <p><b>Your wallet:</b> cash $${L.finance.player.cash} · everyday $${L.finance.player.checking} · savings $${L.finance.player.savings}.
+      <b>Council fund:</b> $${L.finance.treasury}</p>
+      <p><b>Wages paid today:</b> $${L.finance.wagesPaid} · <b>Wages owed:</b> $${L.finance.wagesOwed} ·
+      <b>Wholesale invoices settled:</b> $${L.finance.wholesale}</p>
+      <p class="dim">Town accounts are finite. Bank cash deposits, withdrawals and transfers are fully backed; loans and interest are not implemented.</p>
       <h3>Farms</h3><table class="ledger"><tr><th>Farm</th><th>Crop</th><th>Waiting for pickup</th></tr>${L.farms.map((f) => `<tr><td>${esc(f.name)}</td><td>${Math.round(f.growth * 100)}% grown</td><td>${f.waiting} ${esc(f.makes)}</td></tr>`).join('')}</table>
       <h3>Trucks</h3><p>${L.trucks.map((t) => esc(`${t.driver || 'Spare'}: ${t.state}`)).join('<br>')}</p>
       <h3>News</h3><ul class="news">${L.news.map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`,
@@ -104,7 +110,7 @@ export function ledgerPanel(life) {
 
 // The Town Guide kiosk near the start shows newcomers around.
 export function guidePanel(life, opts) {
-  const { go, ledger, chat, journal, arcade, speed, setSpeed, relic } = opts;
+  const { go, ledger, chat, journal, arcade, speed, setSpeed, relic, wallet } = opts;
   const h = life.minute / 60;
   const hello = h < 5 ? "You're up late! Most of town is asleep" : h < 12 ? "Mornin'! The town's getting going" : h < 17 ? "G'day! It's a busy afternoon" : h < 21 ? 'Evening! People are heading home for tea' : "Evening! The pub's still going";
   const busy = life.ledger();
@@ -120,7 +126,7 @@ export function guidePanel(life, opts) {
       <p class="dim">Time runs at ${speed()}× (a town day takes ${Math.round(72 / speed())} real minutes).</p>`,
     actions: [
       { label: '🥖 High street', run: () => go('bakery') }, { label: '🌳 Market Square', run: () => go('square') }, { label: '🐑 The farms', run: () => go('sheep') },
-      { label: '🚂 Rail Depot', run: () => go('depot') }, { label: '📒 Town Ledger', run: ledger }, { label: '🕹️ Arcade (M5)', run: arcade },
+      { label: '🚂 Rail Depot', run: () => go('depot') }, { label: '📒 Town Ledger', run: ledger }, { label: '💳 My wallet', run: wallet||(()=>walletPanel(life)) }, { label: '🏦 Visit Town Hall Bank', run:()=>go('hall') }, { label: '💼 Paid jobs', run:()=>jobBoardPanel(life,go) }, { label: '🕹️ Arcade (M5)', run: arcade },
       { label: '📖 Quest Journal', run: journal }, { label: '💬 Chat with Rowan', run: chat },
       { label: `⏩ Time ${[1, 4, 15].map((s) => (s === speed() ? `[${s}×]` : `${s}×`)).join(' ')}`, run: () => { const order = [1, 4, 15]; setSpeed(order[(order.indexOf(speed()) + 1) % order.length]); return guidePanel(life, opts); } },
     ],
