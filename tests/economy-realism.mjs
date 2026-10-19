@@ -44,10 +44,10 @@ assert.equal(l.treasury,rent,'Daily close must be idempotent');
 assert.equal(f.moneySupply(),baseline);
 // Real employer pay, including PAYG tax to council, is a pure transfer.
 const baker=l.villagers.find(v=>v.work==='bakery');
-const wageBefore=baker.wallet,govBefore=l.treasury;
+const wageBefore=baker.wallet,govBefore=f.federalTreasury;
 l.pay(baker);
 assert.equal(baker.wallet-wageBefore,41,'$45 baker wage should pay $41 net');
-assert.equal(l.treasury-govBefore,4,'$4 PAYG must go to council');
+assert.equal(f.federalTreasury-govBefore,4,'$4 PAYG must go to Commonwealth');
 assert.equal(f.moneySupply(),baseline);
 // Credit union requires a completed paid shift, teller hours and bank capital.
 // Seed the employment history rather than faking an actual salary transfer.
@@ -60,6 +60,13 @@ assert.equal(f.bankCapital,capital-100);
 assert.equal(m.checking,checking+100);
 assert.equal(f.audit().loanPrincipal,100);
 assert.equal(f.moneySupply(),baseline,'Credit must come from existing bank capital');
+// State-funded education and health wages are not charged to local council.
+const teacher=l.villagers.find(v=>v.work==='school');
+if(teacher){const before=f.stateTreasury,council=l.treasury;const wallet=teacher.wallet;
+ l.pay(teacher);assert.equal(f.stateTreasury,before-60);assert.equal(l.treasury,council);
+ assert.equal(teacher.wallet-wallet,54);
+ assert.equal(f.moneySupply(),baseline);}
+
 assert.equal(f.borrow(100).ok,false,'No stacking member loans');
 assert.equal(f.repay(1000000).ok,false,'Overdraft cannot repay');
 l.day+=31;f.accrueLoan();
@@ -89,4 +96,4 @@ const old={...snap};delete old.finance;
 const legacy=new TownLife({homes});legacy.restore(old);
 assert.equal(legacy.finance.bankCapital,5000);
 assert.equal(legacy.finance.loan,null);
-console.log('PASS: purchases, food, rent, business rates, NPC bills, payroll tax, funded loans, interest, bank settlement, idempotency, save migration and whole-town monetary conservation');
+console.log('PASS: financial conservation incl Commonwealth/NSW/council, taxes, credit, bills, purchases, payroll and saves');
