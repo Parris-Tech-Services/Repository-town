@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { buildFarmhouseInterior } from './farmhouse-interior.js';
+import { buildBakeryInterior } from './bakery-interior.js';
 
 // The twenty high-street services share a safe walkable plan, with different
 // fixtures, colours and exhibits. They are built only while the player is inside.
@@ -43,6 +44,7 @@ const WALL=0.24;
 
 export function buildCivicInterior(site,makeLabel) {
   if(site.id==='farmhouse')return buildFarmhouseInterior(site,makeLabel);
+  if(site.id==='bakery')return buildBakeryInterior(site,makeLabel);
   const [roomTitle,deskName,featureName,accent,deskInfo,featureInfo] =
     FITTINGS[site.id] || [site.name,'Service desk','Town noticeboard',0x98a8b3,'Visit this workplace','This building supports the town.'];
   const group=new THREE.Group();
