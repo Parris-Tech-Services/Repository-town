@@ -18,7 +18,7 @@ import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, 
 import { createTownLife } from './world/townlife.js';
 import { createAmbience } from './ui/ambience.js';
 import { placePanel, buy, ledgerPanel, guidePanel, relicsLeft, townContext } from './ui/townpanels.js';
-import {walletPanel,bankPanel,jobPanel} from './ui/economy-panels.js';
+import {walletPanel,bankPanel,jobPanel,workTaskPanel} from './ui/economy-panels.js';
 import { bakeryStationPanel } from './ui/bakery-panel.js';
 import { createExpedition } from './adventure/expedition.js';
 
@@ -420,6 +420,15 @@ async function start() {
         return;
       }
       const thing = nearThing, request = ++interactionRequest, house = inside;
+      if(inside?.place?.id==='bakery'&&['wash-hands','prep-bench','cooling'].includes(thing.act?.stage)&&
+          life.money.current(life.day)?.site==='bakery'){
+        openPanel(workTaskPanel(life,'bakery',thing.act.stage),thing);
+        return;
+      }
+      if(inside?.place&&thing.act?.do==='job-task'){
+        openPanel(workTaskPanel(life,inside.place.id,thing.act.jobTask),thing);
+        return;
+      }
       if(inside?.place?.id==='bakery'&&(thing.act?.do==='bakery-process'||thing.act?.do==='bakery-status')) {
         openPanel(bakeryStationPanel(life,thing.act.stage),thing);
         return;
