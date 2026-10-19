@@ -1,3 +1,4 @@
+import { TownMoney } from './money.js';
 // Town life simulation: the clock, farms, the mill and bakery, shops, trucks, the post,
 // and villagers with jobs, hunger, pantries, wallets and daily routines. Pure logic (no
 // three.js) so it runs and is tested on its own; src/world/townlife.js draws it.
@@ -11,6 +12,7 @@ export const LOT_X = 26, LOT_Z = 46;
 export const SEC_PER_MIN = 3;
 export const WALK = 1.5, BIKE = 4.5, DRIVE = 8;               // metres per real second
 const WAGES = { retired: 25, student: 10, mayor: 70, nurse: 60, teacher: 60, programmer: 65 };
+const PUBLIC_PAYROLL = new Set(['hall','school','clinic','post','depot','square','home']);
 const ROAD = (r) => r * LOT_Z - 3.5 * LOT_Z + 16;            // road centre line of street r (0-based)
 const lotX = (col) => (col - 12.5) * LOT_X;
 const LOT8_Z = 7 * LOT_Z - 3.5 * LOT_Z;                       // z of the street-8 lot centres
@@ -55,6 +57,8 @@ export const PLACE_DEFS = [
   { col: 'Y', id: 'silo', name: 'Wheat Farm', kind: 'farm', makes: 'grain', opens: 6 * 60, closes: 16 * 60 },
   { col: 'Z', id: 'farmhouse', name: 'Farmhouse', kind: 'home', opens: 0, closes: 24 * 60 },
 ];
+
+const WHOLESALE = Object.fromEntries(Object.entries(GOODS).map(([g,v]) => [g,v.price===0?0:Math.max(1,Math.floor(v.price*.55))]));
 
 const JOBS = [
   ['farmer', 'silo', 6 * 60, 16 * 60], ['farmer', 'garden', 6 * 60, 15 * 60], ['farmer', 'orchard', 7 * 60, 15 * 60],
@@ -142,13 +146,15 @@ export class TownLife {
     this.rand = rng(seed);
     this.day = 1; this.minute = minute;
     this.events = []; this.stats = this.freshStats();
+    this.money = new TownMoney();
+    this.treasury = 80000;
     this.places = new Map();
     for (const d of PLACE_DEFS) {
       const col = d.col.charCodeAt(0) - 65;
       const x = lotX(col);
       this.places.set(d.id, {
         ...d, x, door: { x, z: LOT8_Z + 7.5 }, front: { x, z: LOT8_Z + 9.3 }, curb: { x, z: ROAD(7) - 1.7 },
-        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till: 0, out: {},
+        stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till:0, grossSales:0, operating:PUBLIC_PAYROLL.has(d.id)?0:4500, out:{},
       });
     }
     // Farms keep produce at the farm until a truck collects it; fields lie across the road.
@@ -175,7 +181,30 @@ export class TownLife {
     this.log(`Day ${this.day} begins. The town wakes up.`);
   }
 
-  freshStats() { return { harvested: {}, milled: 0, baked: 0, deliveries: 0, delivered: {}, sold: {}, meals: 0, mealsOut: 0, parcels: 0 }; }
+  freshStats(){return {harvested:{},milled:0,baked:0,deliveries:0,delivered:{},sold:{},meals:0,mealsOut:0,parcels:0,wagesPaid:0,wagesOwed:0,wholesale:0,playerWages:0}}
+  isPublicPayroll(site){return PUBLIC_PAYROLL.has(site)}
+  payWageSource(site,amount){
+    if(!Number.isSafeInteger(amount)||amount<=0)return false;
+    if(this.isPublicPayroll(site)){
+      if(this.treasury<amount)return false;
+      this.treasury-=amount;return true;
+    }
+    const p=this.place(site);
+    return p?TownMoney.debitBusiness(p,amount):false;
+  }
+  payPlayerPurchase(site,good){
+    const shop=this.place(site),inv=shop&&(site==='bakery'?shop.out:shop.stock);
+    const sells=site==='cafe'?['pie','bread']:site==='pub'?['pie']:shop?.sells;
+    if(!shop||!sells?.includes(good)||!GOODS[good])return {ok:false,message:'Product not sold here.'};
+    if(!this.open(shop))return {ok:false,message:'Shop is currently closed.'};
+    if(!(inv[good]>0))return {ok:false,message:'Sold out of '+GOODS[good].name+'.'};
+    const payment=this.money.purchase(this.day,GOODS[good].price,shop,good);
+    if(!payment.ok)return payment;
+    inv[good]--;
+    this.stats.sold[good]=(this.stats.sold[good]||0)+1;
+    this.log('The player bought '+GOODS[good].name+' from '+shop.name+'.');
+    return {...payment,price:GOODS[good].price,remaining:inv[good]};
+  }
   place(id) { return this.places.get(id); }
   time() { return fmt(this.minute); }
   isDay() { return this.minute >= 6 * 60 && this.minute < 19 * 60; }
@@ -282,8 +311,13 @@ export class TownLife {
       const src = this.place(from), dst = this.place(to);
       const have = src.out[good] || 0, need = (dst.target?.[good] || 0) - (dst.stock[good] || 0);
       if (have < 3 || need < 3 || this.trucks.some((o) => o !== t && o.job?.to === to && o.job?.good === good)) continue;
-      const score = need / (dst.target[good] || 1) + this.rand() * 0.1;
-      if (!best || score > best.score) best = { from, to, good, n: Math.min(20, have, need), score };
+      const cost=WHOLESALE[good];
+      const balance=(dst.operating||0)+(dst.till||0);
+      const affordable=cost?Math.floor(balance/cost):20;
+      const quantity=Math.min(20,have,need,affordable);
+      if(quantity<3)continue;
+      const score=need/(dst.target[good]||1)+this.rand()*.1;
+      if(!best||score>best.score)best={from,to,good,n:quantity,score};
     }
     if (!best) { t.state = 'waiting for an order'; return; }
     t.job = best; t.state = `heading to the ${this.place(best.from).name} for ${GOODS[best.good].name}`;
@@ -300,11 +334,18 @@ export class TownLife {
       t.path = driveRoute(t, this.stopAt(t, t.job.to));
       if (!n) { t.job = null; t.path = []; t.leg = null; t.state = 'found nothing to collect, looking for another job'; }
     } else {
-      const n = t.load?.n || 0;
-      dst.stock[g] = (dst.stock[g] || 0) + n;
-      this.stats.deliveries++; this.stats.delivered[g] = (this.stats.delivered[g] || 0) + n;
-      if (n >= 8 || this.rand() < 0.3) this.log(`${t.driver?.name || 'A truck'} delivered ${amount(g, n)} to the ${dst.name}.`);
-      t.load = null; t.job = null; t.wait = 4; t.state = 'unloaded, looking for the next job';
+      const shipped=t.load?.n||0,unit=WHOLESALE[g]||0;
+      const balance=(dst.operating||0)+(dst.till||0);
+      const n=Math.min(shipped,unit?Math.floor(balance/unit):shipped);
+      const invoice=n*unit;
+      if(shipped>n)src.out[g]=(src.out[g]||0)+(shipped-n);
+      if(n&&(!invoice||TownMoney.debitBusiness(dst,invoice))){
+        if(invoice){src.operating=(src.operating||0)+invoice;this.stats.wholesale+=invoice;}
+        dst.stock[g]=(dst.stock[g]||0)+n;
+        this.stats.deliveries++;this.stats.delivered[g]=(this.stats.delivered[g]||0)+n;
+        if(n>=8||this.rand()<.3)this.log((t.driver?.name||'A truck')+' delivered '+amount(g,n)+' to the '+dst.name+' for $'+invoice+'.');
+      }else if(n){src.out[g]=(src.out[g]||0)+n;}
+      t.load=null;t.job=null;t.wait=4;t.state='unloaded, looking for the next job';
     }
   }
 
@@ -487,7 +528,7 @@ export class TownLife {
     const ok = uses.some((g) => (p.stock[g] || 0) > 0);
     if (!ok || v.wallet < price) { v.activity = `found the ${p.name} out of food`; this.log(`The ${p.name} ran out of food and had to turn ${v.name} away.`); return; }
     for (const g of uses) if ((p.stock[g] || 0) > 0) { p.stock[g]--; break; }
-    v.wallet -= price; p.till += price; this.stats.mealsOut++;
+    v.wallet -= price; p.till += price; p.grossSales=(p.grossSales||0)+price; this.stats.mealsOut++;
     this.eat(v, dish); v.activity = `${v.step.activity} — ${dish}`;
   }
 
@@ -495,7 +536,7 @@ export class TownLife {
   snack(v, shopId, good) {
     const shop = this.place(shopId), src = shopId === 'bakery' ? shop.out : shop.stock, price = GOODS[good].price;
     if (!this.open(shop) || !(src[good] > 0) || v.wallet < price) { v.memory = `the ${shop.name} had no ${GOODS[good].name} left`; v.activity = `found the ${shop.name} out of ${GOODS[good].name}`; return; }
-    src[good]--; v.wallet -= price; shop.till += price; this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
+    src[good]--; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.stats.sold[good] = (this.stats.sold[good] || 0) + 1;
     this.eat(v, good === 'pie' ? 'a meat pie from the Bakery' : 'a fresh bread roll');
   }
 
@@ -507,7 +548,7 @@ export class TownLife {
     for (const g of items) {
       const n = g === 'veg' || g === 'bread' ? 2 : 1;
       const have = src[g] || 0, price = GOODS[g].price * n;
-      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; shop.till += price; this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
+      if (have >= n && v.wallet >= price) { src[g] -= n; bag[g] = (bag[g] || 0) + n; v.wallet -= price; shop.till += price; shop.grossSales=(shop.grossSales||0)+price; this.stats.sold[g] = (this.stats.sold[g] || 0) + n; }
       else missing.push(GOODS[g].name);
     }
     if (Object.keys(bag).length) v.carrying = bag;
@@ -515,7 +556,18 @@ export class TownLife {
   }
 
   // Workers are paid at the end of each shift; the money comes back through the shops.
-  pay(v) { v.paidDay = this.day; v.wallet += WAGES[v.job] || 45; }
+  pay(v){
+    const wage=WAGES[v.job]||45;
+    v.paidDay=this.day;
+    if(this.payWageSource(v.work,wage)){
+      v.wallet+=wage;this.stats.wagesPaid+=wage;
+      this.log(v.name+' was paid $'+wage+' from '+(this.isPublicPayroll(v.work)?'council':this.place(v.work)?.name)+'.');
+    }else{
+      v.wageArrears=(v.wageArrears||0)+wage;
+      this.stats.wagesOwed+=wage;
+      this.log(v.name+' is owed $'+wage+' by '+(this.place(v.work)?.name||'the town')+'.');
+    }
+  }
 
   // ── For chat, the guide and the ledger ──
   describe(v) {
@@ -526,18 +578,21 @@ export class TownLife {
   }
   news(n = 6) { return this.events.slice(0, n); }
   ledger() {
-    const shops = [...this.places.values()].filter((p) => p.target).map((p) => ({ name: p.name, stock: p.stock, till: p.till, open: this.open(p) }));
+    const shops = [...this.places.values()].filter(p=>p.target).map(p=>({id:p.id,name:p.name,stock:p.stock,till:p.till,operating:p.operating,grossSales:p.grossSales,open:this.open(p)}));
     const farms = [...this.places.values()].filter((p) => p.kind === 'farm').map((p) => ({ name: p.name, makes: GOODS[p.makes].name, waiting: p.out[p.makes] || 0, growth: p.growth }));
     return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
+      finance:{treasury:this.treasury,player:this.money.snapshot(),wagesPaid:this.stats.wagesPaid,wagesOwed:this.stats.wagesOwed,wholesale:this.stats.wholesale},
       population: this.villagers.length, atWork: this.villagers.filter((v) => v.step?.kind === 'work').length, asleep: this.villagers.filter((v) => v.step?.kind === 'sleep').length };
   }
 
   // Saves just what matters to resume tomorrow where the town left off.
-  snapshot() { return { day: this.day, minute: this.minute, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth, p.supervisedBatch||null]), villagers: this.villagers.map((v) => [v.id, v.pantry, v.wallet, v.lastMeal, v.meals]) }; }
+  snapshot() { return {day:this.day,minute:this.minute,treasury:this.treasury,money:this.money.snapshot(),places:[...this.places.values()].map(p=>[p.id,p.stock,p.out,p.till,p.growth,p.supervisedBatch||null,p.operating,p.grossSales]),villagers:this.villagers.map(v=>[v.id,v.pantry,v.wallet,v.lastMeal,v.meals,v.paidDay||null,v.wageArrears||0])}; }
   restore(s) {
     if (!s || typeof s !== 'object') return;
-    this.day = s.day || 1; this.minute = s.minute || 7 * 60;
-    for (const [id, stock, out, till, growth, supervisedBatch] of s.places || []) { const p = this.place(id); if (p) Object.assign(p, { stock, out, till, growth: growth ?? p.growth, supervisedBatch: supervisedBatch||null }); }
-    for (const [id, pantry, wallet, lastMeal, meals] of s.villagers || []) { const v = this.villagers[id]; if (v) Object.assign(v, { pantry, wallet, lastMeal, meals: meals || [] }); }
+    this.day=s.day||1;this.minute=s.minute||7*60;
+    if(Number.isSafeInteger(s.treasury)&&s.treasury>=0)this.treasury=s.treasury;
+    this.money.restore(s.money);
+    for(const [id,stock,out,till,growth,supervisedBatch,operating,grossSales]of s.places||[]){const p=this.place(id);if(p)Object.assign(p,{stock,out,till,growth:growth??p.growth,supervisedBatch:supervisedBatch||null,operating:Number.isSafeInteger(operating)&&operating>=0?operating:p.operating,grossSales:Number.isSafeInteger(grossSales)&&grossSales>=0?grossSales:0});}
+    for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0});}
   }
 }

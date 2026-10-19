@@ -18,6 +18,7 @@ import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, 
 import { createTownLife } from './world/townlife.js';
 import { createAmbience } from './ui/ambience.js';
 import { placePanel, buy, ledgerPanel, guidePanel, relicsLeft, townContext } from './ui/townpanels.js';
+import {walletPanel,bankPanel,jobPanel,workTaskPanel} from './ui/economy-panels.js';
 import { bakeryStationPanel } from './ui/bakery-panel.js';
 import { createExpedition } from './adventure/expedition.js';
 
@@ -293,6 +294,7 @@ async function start() {
   // Time of day: jumps the town clock (src/world/life.js) to the next part of the day.
   const TIMES = [[7 * 60, '🌅 Morning'], [12 * 60, '☀️ Midday'], [18 * 60 + 40, '🌇 Dusk'], [22 * 60, '🌙 Night']];
   function cycleTime() {
+    if(life.money.current(life.day)){status('Finish or abandon your paid shift before skipping the town clock.');return;}
     const next = TIMES.find(([m]) => m > life.minute + 1) || TIMES[0];
     if (next[0] < life.minute) { life.day++; life.newDay(); }
     life.minute = next[0];
@@ -314,6 +316,7 @@ async function start() {
   syncPerfBtn();
   $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
   $('btn-guide').onclick = () => openPanel(guideContent(), guideSpot);
+  $('btn-wallet').onclick = () => openPanel(walletPanel(life),guideSpot);
   $('btn-help').onclick = () => { input.releaseMouse(); $('help').hidden = !$('help').hidden; };
   $('btn-npcs').onclick = () => { $('npc-roster').hidden = !$('npc-roster').hidden; input.reset(); };
   $('npc-roster-close').onclick = () => { $('npc-roster').hidden = true; };
@@ -418,9 +421,21 @@ async function start() {
         return;
       }
       const thing = nearThing, request = ++interactionRequest, house = inside;
+      if(inside?.place?.id==='bakery'&&['wash-hands','prep-bench','cooling'].includes(thing.act?.stage)&&
+          life.money.current(life.day)?.site==='bakery'){
+        openPanel(workTaskPanel(life,'bakery',thing.act.stage),thing);
+        return;
+      }
+      if(inside?.place&&thing.act?.do==='job-task'){
+        openPanel(workTaskPanel(life,inside.place.id,thing.act.jobTask),thing);
+        return;
+      }
       if(inside?.place?.id==='bakery'&&(thing.act?.do==='bakery-process'||thing.act?.do==='bakery-status')) {
         openPanel(bakeryStationPanel(life,thing.act.stage),thing);
         return;
+      }
+      if(inside?.place?.id==='hall'&&thing.act?.do==='bank-service'){
+        openPanel(bankPanel(life),thing);return;
       }
       if(inside?.place&&thing.act?.do==='civic-ledger'){
         const p=inside.place;
@@ -469,17 +484,17 @@ async function start() {
   // Town-life conversations and panels.
   function guideContent() {
     return guidePanel(life, {
-      go: (id) => { goPlace(id); return null; }, ledger: () => ledgerPanel(life),
+      go: (id) => { goPlace(id); return null; }, ledger: () => ledgerPanel(life), wallet:()=>walletPanel(life),
       // Rowan (src/ui/npc-data.js) is the guide you can chat with.
       chat: () => { closePanel(); npcChat.show(streetNPCs.find((n) => n.npc.id === 'rowan')?.npc || 'rowan', null); return null; },
       journal: () => { closePanel(); expedition.showJournal(); return null; },
       arcade: () => { travel('M5'); return null; },
-      speed: () => life.speed, setSpeed: (n) => { life.speed = n; townLife.save(); }, relic: () => relicsLeft()[0],
+      speed: () => life.speed, setSpeed: (n) => { life.speed = life.money.current(life.day)?1:n; townLife.save(); }, relic: () => relicsLeft()[0],
     });
   }
   function talkTo(p) {
     if (p.guide) { openPanel(guideContent(), p); return; }
-    if (p.spot) { const c = p.spot.id === 'hall' ? ledgerPanel(life) : placePanel(life, p.spot.id, (id, g) => buy(life, id, g)); openPanel(c, p); return; }
+    if (p.spot) { const c=placePanel(life,p.spot.id,(id,g)=>buy(life,id,g));openPanel(c,p);return; }
     const v = p.v, home = byCoord.get(v.home.coordinate);
     p.talking = true;
     openPanel(npcBehaviour({ act: { do: 'npc', name: v.name, role: 'villager' } }, { house: home, houses, town: () => townContext(life, v) }), p);
@@ -560,9 +575,17 @@ async function start() {
 
     // The town keeps living while the player is indoors; the sky follows its clock.
     const talkingTo = panelOpen?.thing?.v ? panelOpen.thing : null;
+    if(life.money.current(life.day)&&life.speed!==1)life.speed=1;
+    const moneyClockBefore=life.day*1440+life.minute;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo });
+    // Wages accrue only for town minutes actually spent in the assigned
+    // workplace while a supervisor is present. Waiting elsewhere pays nothing.
+    life.money.tickJob(life,life.day*1440+life.minute-moneyClockBefore,
+      mode==='house'?inside?.place?.id:null);
     const clockText = `🕖 ${life.time()} · Day ${life.day}${life.speed > 1 ? ` · ${life.speed}×` : ''}`;
     if ($('clock').textContent !== clockText) $('clock').textContent = clockText;
+    const walletText='💰 $'+life.money.total;
+    if($('btn-wallet').textContent!==walletText)$('btn-wallet').textContent=walletText;
     syncTimeBtn();
     {
       let truck = Infinity; for (const tr of life.trucks) truck = Math.min(truck, Math.hypot(tr.x - player.pos.x, tr.z - player.pos.z));
@@ -680,6 +703,11 @@ async function start() {
 
   // Test hook: lets the browser test suite drive real gameplay deterministically.
   window.__town = {
+    money:()=>({cash:life.money.cash,checking:life.money.checking,savings:life.money.savings,total:life.money.total,method:life.money.payment,
+      job:life.money.current(life.day),treasury:life.treasury}),
+    wallet:()=>openPanel(walletPanel(life),guideSpot),
+    bank:()=>openPanel(bankPanel(life),guideSpot),
+    jobSite:(site)=>openPanel(jobPanel(life,site),guideSpot),
     houses: houses.map((h) => ({ coordinate: h.coordinate, name: h.name })),
     npcs: streetNPCs.map((x) => ({ id: x.npc.id, name: x.npc.name, coordinate: x.npc.coordinate })),
     npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),

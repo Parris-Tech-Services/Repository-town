@@ -2,6 +2,8 @@ import { locateVillager } from './npc-location.js';
 // Panels for town life: shop counters, farms, the Town Ledger and the town guide, plus
 // the gossip and Expedition relic hints villagers share in conversation (src/ui/npc.js).
 import { GOODS, amount, timeText } from '../world/life.js';
+import {JOB_BOARD} from '../world/money.js';
+import {walletPanel,bankPanel,jobPanel,jobBoardPanel} from './economy-panels.js';
 import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
 import { esc } from './interactions.js';
 
@@ -51,29 +53,36 @@ export function placePanel(life, id, onBuy) {
     if (id === 'bakery') rows.push(`<p><b>Out the back:</b> ${esc(list(p.stock))}</p>`);
     if (id === 'mill') rows.push(`<p><b>Ready to go:</b> ${esc(list(p.out))}</p>`);
     if (id === 'depot') rows.push(`<p><b>On the platform:</b> ${esc(list(p.out))}</p><p><b>Trucks:</b> ${life.trucks.map((t) => esc(`${t.driver?.name || 'Spare truck'} — ${t.state}`)).join('<br>')}</p>`);
-    if (p.till) rows.push(`<p><b>Takings so far:</b> $${p.till}</p>`);
+    rows.push(`<p><b>Cash register:</b> $${p.till||0} · <b>Operating funds:</b> $${p.operating||0} · <b>Gross sales:</b> $${p.grossSales||0}</p>`);
   }
+  rows.push(`<p><b>Your wallet:</b> $${life.money.cash} cash · $${life.money.checking} on card · Paying by ${life.money.payment}. A purchase now deducts funds.</p>`);
   rows.push(`<p><b>Working here:</b> ${staff.length ? staff.map((v) => esc(`${v.name} (${v.job}, ${timeText(v.start)}–${timeText(v.end)})${here.includes(v) ? ' — here now' : ''}`)).join(', ') : 'nobody'}</p>`);
   if (visitors.length) rows.push(`<p><b>Here now:</b> ${visitors.map((v) => esc(`${v.name}, ${v.activity}`)).join('; ')}</p>`);
   if (id === 'square' || id === 'hall') rows.push(`<h3>Town news</h3><ul class="news">${life.news(8).map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`);
   const shelves = id === 'bakery' ? p.out : p.stock;
   const sells = { store: p.sells, bakery: p.sells, greengrocer: p.sells, butcher: p.sells, cafe: ['pie', 'bread'], pub: ['pie'] }[id] || [];
   const actions = sells.filter((g) => (shelves[g] || 0) > 0).slice(0, 4).map((g) => ({ label: `Buy ${GOODS[g].unit === 'pie' ? 'a pie' : `a ${GOODS[g].unit} of ${GOODS[g].name}`} ($${GOODS[g].price})`, run: () => onBuy(id, g) }));
-  if (id === 'hall') actions.unshift({ label: 'Open the Town Ledger', run: () => ledgerPanel(life) });
+  if(JOB_BOARD.some(j=>j.site===id))actions.unshift({label:'💼 Ask about paid shifts',run:()=>jobPanel(life,id)});
+  if(id==='hall'){
+    actions.unshift({label:'🏦 Community Bank teller',run:()=>bankPanel(life)});
+    actions.unshift({label:'Town Ledger',run:()=>ledgerPanel(life)});
+  }
+  actions.push({label:'💳 Wallet and payment method',run:()=>walletPanel(life)});
   return { title: `${p.name} · ${p.kind === 'farm' ? 'farm' : p.kind}`, body: rows.join(''), actions, wide: true };
 }
 
-export function buy(life, id, good) {
-  const p = life.place(id), shelves = id === 'bakery' ? p.out : p.stock;
-  if (!life.open(p)) return { title: p.name, body: `<p>The ${esc(p.name)} is closed — it opens at ${esc(timeText(p.opens))}.</p>` };
-  if (!(shelves[good] > 0)) return { title: p.name, body: `<p>Sorry, sold out of ${esc(GOODS[good].name)}. The next truck should bring more.</p>` };
-  shelves[good]--; p.till += GOODS[good].price;
-  life.stats.sold[good] = (life.stats.sold[good] || 0) + 1;
-  const taste = { bread: 'still warm from the oven', pie: 'a proper meat pie, peppery and hot', veg: 'crisp and fresh from the garden', fruit: 'sweet and picked this week', eggs: 'a dozen free-range eggs', milk: 'cold and creamy', lamb: 'wrapped in butcher\'s paper', coffee: 'smells amazing', tea: 'a tin of strong breakfast tea', flour: 'a sack of the mill\'s own flour' }[good] || '';
-  life.log(`A visitor bought ${GOODS[good].name} at the ${p.name}.`);
-  return { title: p.name, body: `<p>You buy ${esc(amount(good, 1))} — ${esc(taste)}. $${GOODS[good].price} goes in the till.</p><p class="dim">Left on the shelves: ${shelves[good]}.</p>` };
+export function buy(life,id,good){
+  const shop=life.place(id),result=life.payPlayerPurchase(id,good),wallet=life.money;
+  if(!result.ok)return {title:shop?.name||'Shop',
+    body:'<p><b>'+esc(result.message)+'</b></p><p>Cash: $'+wallet.cash+' · Card: $'+wallet.checking+' · Savings: $'+wallet.savings+'</p>',
+    actions:[{label:'💳 Wallet',run:()=>walletPanel(life)},{label:'Back to shop',run:()=>placePanel(life,id,(site,item)=>buy(life,site,item))}]};
+  const flavour={bread:'freshly baked',pie:'hot pie',veg:'local produce',fruit:'seasonal fruit',eggs:'a dozen eggs',milk:'Dairy milk',lamb:'butcher-cut lamb',coffee:'beans',tea:'tea',flour:'mill flour'}[good]||'';
+  return {title:shop.name+' · receipt',
+    body:'<p>You bought '+esc(amount(good,1))+' · '+esc(flavour)+'.</p><p><b>'+esc(result.message)+'</b></p>'+
+    '<p><b>Remaining stock:</b> '+result.remaining+' · <b>Cash:</b> $'+wallet.cash+' · <b>Card:</b> $'+wallet.checking+'</p>',
+    actions:[{label:'Continue shopping',run:()=>placePanel(life,id,(site,item)=>buy(life,site,item))},
+      {label:'💳 Wallet',run:()=>walletPanel(life)}]};
 }
-
 export function ledgerPanel(life) {
   const L = life.ledger(), s = L.stats;
   const n = (o) => Object.entries(o).map(([g, k]) => esc(amount(g, k))).join(', ') || 'none yet';
@@ -86,7 +95,13 @@ export function ledgerPanel(life) {
       <b>Deliveries:</b> ${s.deliveries} truckloads — ${n(s.delivered)}<br><b>Sold in shops:</b> ${n(s.sold)}<br>
       <b>Meals:</b> ${s.meals} eaten (${s.mealsOut} at the café and pub) · <b>Parcels delivered:</b> ${s.parcels}</p>
       ${y ? `<p class="dim">Yesterday: ${y.deliveries} deliveries, ${y.baked} baked, ${y.meals} meals, ${y.parcels} parcels.</p>` : ''}
-      <h3>Shops</h3><table class="ledger"><tr><th>Shop</th><th>Stock</th><th>Till</th></tr>${L.shops.map((p) => `<tr><td>${esc(p.name)} ${p.open ? '' : '<span class="dim">(closed)</span>'}</td><td>${esc(list(p.stock))}</td><td>$${p.till}</td></tr>`).join('')}</table>
+      <h3>Shops</h3><table class="ledger"><tr><th>Shop</th><th>Stock</th><th>Cash till</th><th>Operating account</th></tr>${L.shops.map((p) => `<tr><td>${esc(p.name)} ${p.open ? '' : '<span class="dim">(closed)</span>'}</td><td>${esc(list(p.stock))}</td><td>$${p.till}</td><td>$${p.operating}</td></tr>`).join('')}</table>
+      <h3>Town finance</h3>
+      <p><b>Your wallet:</b> cash $${L.finance.player.cash} · everyday $${L.finance.player.checking} · savings $${L.finance.player.savings}.
+      <b>Council fund:</b> $${L.finance.treasury}</p>
+      <p><b>Wages paid today:</b> $${L.finance.wagesPaid} · <b>Wages owed:</b> $${L.finance.wagesOwed} ·
+      <b>Wholesale invoices settled:</b> $${L.finance.wholesale}</p>
+      <p class="dim">Town accounts are finite. Bank cash deposits, withdrawals and transfers are fully backed; loans and interest are not implemented.</p>
       <h3>Farms</h3><table class="ledger"><tr><th>Farm</th><th>Crop</th><th>Waiting for pickup</th></tr>${L.farms.map((f) => `<tr><td>${esc(f.name)}</td><td>${Math.round(f.growth * 100)}% grown</td><td>${f.waiting} ${esc(f.makes)}</td></tr>`).join('')}</table>
       <h3>Trucks</h3><p>${L.trucks.map((t) => esc(`${t.driver || 'Spare'}: ${t.state}`)).join('<br>')}</p>
       <h3>News</h3><ul class="news">${L.news.map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`,
@@ -95,7 +110,7 @@ export function ledgerPanel(life) {
 
 // The Town Guide kiosk near the start shows newcomers around.
 export function guidePanel(life, opts) {
-  const { go, ledger, chat, journal, arcade, speed, setSpeed, relic } = opts;
+  const { go, ledger, chat, journal, arcade, speed, setSpeed, relic, wallet } = opts;
   const h = life.minute / 60;
   const hello = h < 5 ? "You're up late! Most of town is asleep" : h < 12 ? "Mornin'! The town's getting going" : h < 17 ? "G'day! It's a busy afternoon" : h < 21 ? 'Evening! People are heading home for tea' : "Evening! The pub's still going";
   const busy = life.ledger();
@@ -111,7 +126,7 @@ export function guidePanel(life, opts) {
       <p class="dim">Time runs at ${speed()}× (a town day takes ${Math.round(72 / speed())} real minutes).</p>`,
     actions: [
       { label: '🥖 High street', run: () => go('bakery') }, { label: '🌳 Market Square', run: () => go('square') }, { label: '🐑 The farms', run: () => go('sheep') },
-      { label: '🚂 Rail Depot', run: () => go('depot') }, { label: '📒 Town Ledger', run: ledger }, { label: '🕹️ Arcade (M5)', run: arcade },
+      { label: '🚂 Rail Depot', run: () => go('depot') }, { label: '📒 Town Ledger', run: ledger }, { label: '💳 My wallet', run: wallet||(()=>walletPanel(life)) }, { label: '🏦 Visit Town Hall Bank', run:()=>go('hall') }, { label: '💼 Paid jobs', run:()=>jobBoardPanel(life,go) }, { label: '🕹️ Arcade (M5)', run: arcade },
       { label: '📖 Quest Journal', run: journal }, { label: '💬 Chat with Rowan', run: chat },
       { label: `⏩ Time ${[1, 4, 15].map((s) => (s === speed() ? `[${s}×]` : `${s}×`)).join(' ')}`, run: () => { const order = [1, 4, 15]; setSpeed(order[(order.indexOf(speed()) + 1) % order.length]); return guidePanel(life, opts); } },
     ],
