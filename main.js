@@ -6,6 +6,7 @@ import { loadSave, writeSave, clearSave } from './engine/save.js';
 import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { buildCivicInterior } from './world/shop-interior.js';
+import { populateShopStaff } from './world/shop-staff.js';
 import { animate } from './world/builder.js';
 import { makeLabel, disposeLabel } from './ui/labels.js';
 import { runInteraction, esc } from './ui/interactions.js';
@@ -172,9 +173,10 @@ async function start() {
   function enterShop(id) {
     if(mode!=='town'||!life.places.has(id))return false;
     const site=life.place(id), built=buildCivicInterior(site,makeLabel);
+    const staff=populateShopStaff(site,life,built,makeLabel);
     const brief={coordinate:site.col+'8',name:site.name,kind:site.kind,
       street:'High Street',summary:'Explore the shop interior and speak to staff.'};
-    inside={house:brief,place:site,people:[],...built};
+    inside={house:brief,place:site,...built,people:staff};
     scene.add(built.group);town.group.visible=false;
     scene.background.set(INDOOR);scene.fog=null;
     world=new CollisionWorld(built.colliders);
@@ -366,7 +368,27 @@ async function start() {
         return;
       }
       const person = thing.person && inside.people?.find((p) => p.key === thing.key);
-      if (person) { person.talking = true; openPanel(npcBehaviour(thing, { house: inside.house, houses, town: () => townContext(life, null, person.activity) }), thing); return; }
+      if (person) {
+        person.talking = true;
+        if(inside.place){
+          const staffHome=person.v?.home?.coordinate && byCoord.get(person.v.home.coordinate);
+          const shopHouse=staffHome || {...inside.house,
+            int:{rooms:[{name:inside.rooms[0].name,props:[]}]},links:[],repo:null};
+          const shop=inside.place;
+          const localTown=()=>({
+            ...townContext(life,person.v||null),
+            location:{name:shop.name,status:'working',activity:person.activity},
+            workplace:{id:shop.id,name:shop.name},
+            resident:!person.v?person.activity:null,
+          });
+          openPanel(npcBehaviour(thing,{house:shopHouse,houses,
+            workplace:shop.name,town:localTown}),thing);
+        } else {
+          openPanel(npcBehaviour(thing,{house:inside.house,houses,
+            town:()=>townContext(life,null,person.activity)}),thing);
+        }
+        return;
+      }
       Promise.resolve(runInteraction(thing, ctx)).then((content) => { if (request === interactionRequest && inside === house && mode === 'house') openPanel(content, thing); })
         .catch((e) => { if (request === interactionRequest && inside === house) openPanel({ title: thing.label, body: `<p>Couldn't open this exhibit: ${esc(e.message)}</p>` }, thing); });
     }
