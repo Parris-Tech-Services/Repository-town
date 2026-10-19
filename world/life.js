@@ -1,4 +1,5 @@
 import { TownMoney } from './money.js';
+import { TownFinance } from './finance.js';
 // Town life simulation: the clock, farms, the mill and bakery, shops, trucks, the post,
 // and villagers with jobs, hunger, pantries, wallets and daily routines. Pure logic (no
 // three.js) so it runs and is tested on its own; src/world/townlife.js draws it.
@@ -148,6 +149,7 @@ export class TownLife {
     this.events = []; this.stats = this.freshStats();
     this.money = new TownMoney();
     this.treasury = 80000;
+    this.finance=new TownFinance(this);
     this.places = new Map();
     for (const d of PLACE_DEFS) {
       const col = d.col.charCodeAt(0) - 65;
@@ -217,7 +219,7 @@ export class TownLife {
   tick(minutes) {
     const before = this.minute;
     this.minute += minutes;
-    if (this.minute >= 24 * 60) { this.minute -= 24 * 60; this.day++; this.newDay(); }
+    if (this.minute >= 24 * 60) { this.minute -= 24 * 60; this.day++; this.newDay(); this.finance.dailyClose(); }
     const hourly = Math.floor(before / 60) !== Math.floor(this.minute / 60) || this.minute < before;
     if (hourly) this.everyHour();
     for (const v of this.villagers) this.liveVillager(v, minutes);
@@ -561,6 +563,9 @@ export class TownLife {
     v.paidDay=this.day;
     if(this.payWageSource(v.work,wage)){
       v.wallet+=wage;this.stats.wagesPaid+=wage;
+      const withheld=this.finance.taxNpcWage(v,wage);
+      if(withheld)this.log(v.name+' paid $'+withheld+' income tax to council.');
+
       this.log(v.name+' was paid $'+wage+' from '+(this.isPublicPayroll(v.work)?'council':this.place(v.work)?.name)+'.');
     }else{
       v.wageArrears=(v.wageArrears||0)+wage;
@@ -580,19 +585,20 @@ export class TownLife {
   ledger() {
     const shops = [...this.places.values()].filter(p=>p.target).map(p=>({id:p.id,name:p.name,stock:p.stock,till:p.till,operating:p.operating,grossSales:p.grossSales,open:this.open(p)}));
     const farms = [...this.places.values()].filter((p) => p.kind === 'farm').map((p) => ({ name: p.name, makes: GOODS[p.makes].name, waiting: p.out[p.makes] || 0, growth: p.growth }));
-    return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
+    return { day: this.day, time: fmt(this.minute), stats: this.stats, yesterday: this.yesterday || null, shops, farms, economy:this.finance.audit(), trucks: this.trucks.map((t) => ({ driver: t.driver?.name, state: t.state, load: t.load })), parcels: this.parcels.length, news: this.news(12),
       finance:{treasury:this.treasury,player:this.money.snapshot(),wagesPaid:this.stats.wagesPaid,wagesOwed:this.stats.wagesOwed,wholesale:this.stats.wholesale},
       population: this.villagers.length, atWork: this.villagers.filter((v) => v.step?.kind === 'work').length, asleep: this.villagers.filter((v) => v.step?.kind === 'sleep').length };
   }
 
   // Saves just what matters to resume tomorrow where the town left off.
-  snapshot() { return {day:this.day,minute:this.minute,treasury:this.treasury,money:this.money.snapshot(),places:[...this.places.values()].map(p=>[p.id,p.stock,p.out,p.till,p.growth,p.supervisedBatch||null,p.operating,p.grossSales]),villagers:this.villagers.map(v=>[v.id,v.pantry,v.wallet,v.lastMeal,v.meals,v.paidDay||null,v.wageArrears||0])}; }
+  snapshot() { return {day:this.day,minute:this.minute,treasury:this.treasury,money:this.money.snapshot(),finance:this.finance.snapshot(),places:[...this.places.values()].map(p=>[p.id,p.stock,p.out,p.till,p.growth,p.supervisedBatch||null,p.operating,p.grossSales]),villagers:this.villagers.map(v=>[v.id,v.pantry,v.wallet,v.lastMeal,v.meals,v.paidDay||null,v.wageArrears||0,v.housingArrears||0])}; }
   restore(s) {
     if (!s || typeof s !== 'object') return;
     this.day=s.day||1;this.minute=s.minute||7*60;
     if(Number.isSafeInteger(s.treasury)&&s.treasury>=0)this.treasury=s.treasury;
     this.money.restore(s.money);
+    this.finance.restore(s.finance);
     for(const [id,stock,out,till,growth,supervisedBatch,operating,grossSales]of s.places||[]){const p=this.place(id);if(p)Object.assign(p,{stock,out,till,growth:growth??p.growth,supervisedBatch:supervisedBatch||null,operating:Number.isSafeInteger(operating)&&operating>=0?operating:p.operating,grossSales:Number.isSafeInteger(grossSales)&&grossSales>=0?grossSales:0});}
-    for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0});}
+    for(const [id,pantry,wallet,lastMeal,meals,paidDay,wageArrears,housingArrears]of s.villagers||[]){const v=this.villagers[id];if(v)Object.assign(v,{pantry,wallet,lastMeal,meals:meals||[],paidDay:paidDay||null,wageArrears:wageArrears||0,housingArrears:housingArrears||0});}
   }
 }
