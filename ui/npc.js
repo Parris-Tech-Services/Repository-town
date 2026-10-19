@@ -3,6 +3,7 @@
 // when it is busy, they answer from the house's facts and the town's life.
 // Groq API keys are NEVER stored in the browser or included in client files.
 import { repoInfo } from './archive.js';
+import { groundedLocationReply } from './npc-location.js';
 import { RELICS, PROGRESS_KEY, cleanProgress } from '../adventure/data.js';
 import { recordPlayerMessage, recordTownAction, socialContext, socialGossip } from './social.js';
 
@@ -29,6 +30,11 @@ async function askResidentProxy(id, house, name, f, role, history, town) {
     name,
     role: role === 'villager' ? 'villager' : 'resident',
     coordinate: house.coordinate,
+    currentLocation: town?.location || null,
+    currentActivity: me?.now || town?.resident || '',
+    currentTime: town?.time || '',
+    currentDay: town?.day || 1,
+    workplace: me?.workplace || '',
     street: house.street,
     houseName: house.name,
     kind: house.kind,
@@ -156,6 +162,8 @@ function townReply(t, town, pick) {
 function scripted(house, name, f, text, role, town) {
   const t = text.toLowerCase().trim();
   const pick = (a) => a[Math.floor(Math.random() * a.length)];
+  const locationAnswer=groundedLocationReply(town?.location,text);
+  if(locationAnswer)return locationAnswer;
   const fromTown = townReply(t, town, pick);
   if (fromTown) return fromTown;
   const exhibit = () => pick(f.exhibits)?.replace(/ \(.*\)$/, '') || 'the archive';
@@ -251,7 +259,7 @@ export function npcBehaviour(x, ctx) {
   const job = ctx.town?.()?.self?.job;
   return {
     title: x.act.role === 'villager' ? `${name} · ${job ? `${job} · ` : ''}lives at ${house.coordinate} · ${house.name}` : `${name} · resident of ${house.name}`,
-    body: `<div class="chat"><div class="chat-log" aria-live="polite"></div>
+    body: `<div class="chat"><p class="chat-location dim" aria-live="polite"></p><div class="chat-log" aria-live="polite"></div>
       <div class="chat-chips">
         <button type="button" class="chat-chip" data-ask="Any relic hints for the Adventure Guild?">🧭 Relic hint</button>
         <button type="button" class="chat-chip" data-ask="Any gossip about the neighbours on this street?">🗣️ Neighbours</button>
@@ -268,6 +276,9 @@ export function npcBehaviour(x, ctx) {
     mount(root) {
       const panel = root.closest?.('#panel') || root;
       const log = root.querySelector('.chat-log'), form = root.querySelector('.chat-form'), input = root.querySelector('.chat-input'), brain = root.querySelector('.chat-brain');
+      const locationLabel=root.querySelector('.chat-location');
+      const renderLocation=()=>{const loc=ctx.town?.()?.location;locationLabel.textContent=loc?(loc.status==='travelling'?'🚶 ':'📍 ')+loc.name+(loc.activity?' · '+loc.activity:''):'';};
+      renderLocation();
       const history = chats[id] || (chats[id] = []);
       const syncViewport = () => {
         const vv = window.visualViewport;
@@ -314,13 +325,16 @@ export function npcBehaviour(x, ctx) {
         log.insertAdjacentHTML('beforeend', `<p class="npc dim thinking">${esc(name)} is thinking…</p>`);
         facts = await factsFor(house, name, allHouses);
         const town = ctx.town?.() || null;
-        let reply;
-        try {
-          reply = await askResidentProxy(id, house, name, facts, x.act.role, history, town);
-        } catch (err) {
-          reply = scripted(house, name, facts, text, x.act.role, town);
-          if (err.code === 'offline') reply += ' (Offline, so a simple reply.)';
-          else if (err.code === 'busy') reply += ' (AI service is busy right now, so a simple reply.)';
+        renderLocation();
+        // Game-state location facts outrank AI guesses, even when AI is offline.
+        let reply=groundedLocationReply(town?.location,text);
+        if(!reply){
+          try {reply=await askResidentProxy(id,house,name,facts,x.act.role,history,town);}
+          catch(err){
+            reply=scripted(house,name,facts,text,x.act.role,town);
+            if(err.code==='offline')reply += ' (Offline, so a simple reply.)';
+            else if(err.code==='busy')reply += ' (AI service is busy right now, so a simple reply.)';
+          }
         }
         history.push({ role: 'assistant', content: reply });
         saveChats();
