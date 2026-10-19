@@ -1,0 +1,6 @@
+Repository Town — unified backup playtest
+Published source: joshualparris/JoshMemory commit f7dfee8aecf5d495952a1ed3ef2561c3e82cdf2d
+Successful full-town browser run: https://github.com/joshualparris/JoshMemory/actions/runs/39229344740
+Successful shop/multifloor regression run: https://github.com/joshualparris/JoshMemory/actions/runs/39236562412
+Deployment: /Repository-town/backup-unified/
+Source JS/CSS/HTML is drawn from the tested source commit, and existing public generated assets (houses, games, media, vendor) are reused. This preview does NOT overwrite the normal website.
