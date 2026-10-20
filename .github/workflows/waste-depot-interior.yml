@@ -1,0 +1,39 @@
+name: Waste Depot Interior Regression
+on:
+  push:
+    branches:
+      - main
+      - feat/q8-waste-depot-interior-20261020
+    paths:
+      - 'world/waste-depot-interior.js'
+      - 'ui/waste-depot-panel.js'
+      - 'world/shop-interior.js'
+      - 'main.js'
+      - 'tests/waste-depot-interior.mjs'
+      - '.github/workflows/waste-depot-interior.yml'
+  pull_request:
+    paths:
+      - 'world/waste-depot-interior.js'
+      - 'ui/waste-depot-panel.js'
+      - 'world/shop-interior.js'
+      - 'main.js'
+      - 'tests/waste-depot-interior.mjs'
+      - '.github/workflows/waste-depot-interior.yml'
+jobs:
+  waste-depot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check factory syntax and safe navigation
+        run: |
+          node --check world/waste-depot-interior.js
+          node --check ui/waste-depot-panel.js
+          node --check world/shop-interior.js
+          node --check main.js
+          node tests/waste-depot-interior.mjs
