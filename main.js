@@ -8,6 +8,7 @@ import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { honourPaulRoe } from './world/paul-roe-tribute.js';
 import { buildCivicInterior } from './world/shop-interior.js';
+import { wasteDepotPanel } from './ui/waste-depot-panel.js';
 import { civicExitPose } from './world/shop-exit.js';
 import { populateShopStaff } from './world/shop-staff.js';
 import { createShopVisitors } from './world/shop-visitors.js';
@@ -587,6 +588,10 @@ async function start() {
       }
       if(thing.act?.do==='household'&&inside?.house?.household){
         openPanel(householdPanel(life,inside.house.household,thing.act.what),thing);
+        return;
+      }
+      if(inside?.place?.id==='landfill'&&thing.act?.do==='waste-depot-status'){
+        openPanel(wasteDepotPanel(life,thing.key.split(':')[1]),thing);
         return;
       }
       if(inside?.place&&thing.act?.do==='civic-ledger'){
