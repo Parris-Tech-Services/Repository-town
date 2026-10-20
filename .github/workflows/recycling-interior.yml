@@ -1,0 +1,39 @@
+name: Recycling Centre Interior Regression
+on:
+  push:
+    branches:
+      - main
+      - feat/p8-recycling-centre-interior-20261020
+    paths:
+      - 'world/recycling-interior.js'
+      - 'ui/recycling-panel.js'
+      - 'world/shop-interior.js'
+      - 'main.js'
+      - 'tests/recycling-interior.mjs'
+      - '.github/workflows/recycling-interior.yml'
+  pull_request:
+    paths:
+      - 'world/recycling-interior.js'
+      - 'ui/recycling-panel.js'
+      - 'world/shop-interior.js'
+      - 'main.js'
+      - 'tests/recycling-interior.mjs'
+      - '.github/workflows/recycling-interior.yml'
+jobs:
+  test-recycling:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify 3D module syntax, safe plant access and full aisle navigation
+        run: |
+          node --check world/recycling-interior.js
+          node --check world/shop-interior.js
+          node --check ui/recycling-panel.js
+          node --check main.js
+          node tests/recycling-interior.mjs
