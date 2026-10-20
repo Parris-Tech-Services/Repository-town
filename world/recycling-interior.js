@@ -69,7 +69,7 @@ export function buildRecyclingInterior(site,makeLabel,life=null){
  add('checkin','Drop-off and material acceptance','recycling-status',
    'Check accepted materials, record deliveries and see the town collection totals. Batteries and hazardous materials must be separately assessed, never placed on the conveyor.',-3.27,3.48);
  add('scales','Receiving scales and material register','recycling-status',
-   'The platform scale and goods-in sheet record incoming loads. This is a fictional accounting view, not measured real-world weight.',-3.1,4.82);
+   'The platform scale and goods-in sheet record incoming loads. This is a fictional accounting view, not measured real-world weight.',-2.18,4.82);
  // Customer waiting and PPE briefing, separately from moving plant.
  text('SAFETY INDUCTION',4.3,3.05,5.18);
  solid(2.05,1.5,.46,5.68,.75,4.1,C.steel); // notice cabinet
