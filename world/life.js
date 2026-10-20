@@ -997,8 +997,22 @@ export class TownLife {
               // If an intermediate pavement junction is blocked too long,
               // safely regenerate the remaining street route instead of
               // staying frozen forever or walking through the player.
-              if(v.detourWait>4&&v.path.length>1){
-                v.path.shift();v.detourWait=0;
+              if(v.detourWait>4){
+                // Never remain trapped at a doorway or waypoint forever.
+                // Intermediate waypoints can be discarded; for the final
+                // destination either enter when already close enough or
+                // regenerate a fresh trip from the current safe position.
+                v.detourWait=0;
+                if(v.path.length>1){
+                  v.path.shift();
+                }else if(Math.hypot(v.x-destination.x,v.z-destination.z)<2.6){
+                  v.path.length=0;this.arrive(v);return;
+                }else{
+                  const goal={x:destination.x,z:destination.z};
+                  v.path=walkRoute(v,goal);
+                  // A blocked final approach will be reconsidered on the
+                  // next tick; don't teleport into an occupied doorway.
+                }
               }
               break;
             }
