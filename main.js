@@ -948,6 +948,9 @@ async function start() {
     npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),
     talkTo: (id) => npcChat.show(id),
     travel,
+    // Reliable test-only direct entry, for regression testing authored homes.
+    enterHouse:(coord)=>{if(!byCoord.has(coord))return false;if(mode==='house')leave(false);enter(coord);return true;},
+    exitHouse:()=>{if(mode!=='house'||inside?.place)return false;leave();return true;},
     state: () => ({
       mode, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
       seats: mode==='house' ? (inside?.seats||[]).map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos,room:x.room})) : townLife.seats.map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos})),
