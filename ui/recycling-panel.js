@@ -1,3 +1,4 @@
+import { workingAt } from '../world/shop-attendance.js';
 // Snapshot on click: counts are read from the existing TownLife model, not
 // invented visual exhibits. E-waste and battery display areas are not separate
 // mass-flow categories in the current game and must never claim that they are.
@@ -33,7 +34,7 @@ export function recyclingPanel(life,station='checkin'){
  const household=safe(life.civic?.homes?.recyclables);
  const recovered=safe(life.stats?.recycled);
  const workers=life.villagers.filter(v=>v.work==='recycling');
- const onShift=workers.filter(v=>v.step?.kind==='work'&&!v.path?.length);
+ const onShift=workers.filter(v=>workingAt(v,'recycling'));
  const available=life.open(site);
  return {
   title:'♻ '+(names[station]||'Recycling Centre'),
