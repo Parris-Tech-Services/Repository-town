@@ -1,4 +1,5 @@
 import { separatePedestrians } from './pedestrian-spacing.js';
+import { orderCafe } from './cafe-menu.js';
 import { bicycleClear, cyclingRoute } from './bicycle-safety.js';
 import { pedestrianDetour,canFinishNearOccupiedDoor } from './pedestrian-navigation.js';
 import { distributePower, townPowerDemands, POWER_LINE_IDS, GRID_FAULT_COST } from './power-grid.js';
@@ -463,6 +464,7 @@ export class TownLife {
     return `The ${p.name} buys it back for $${pay}.`;
   }
   eatItem(good) { return eatPlayer(this,good); }
+  orderCafe(itemId) { return orderCafe(this,itemId); }
   bookHotel() { return hotelCheckIn(this); }
   sleepHotel(room=null) { return sleepPlayer(this,'hotel',room); }
   needsReport() { return needsReport(this); }
@@ -760,7 +762,7 @@ export class TownLife {
       ['garden', 'veg', 'greengrocer'], ['garden', 'veg', 'bakery'], ['garden', 'veg', 'pub'], ['garden', 'veg', 'cafe'], ['orchard', 'fruit', 'greengrocer'],
       ['dairy', 'milk', 'store'], ['dairy', 'milk', 'cafe'], ['dairy', 'milk', 'bakery'], ['coop', 'eggs', 'store'], ['coop', 'eggs', 'cafe'], ['coop', 'eggs', 'bakery'],
       ['sheep', 'lamb', 'butcher'], ['sheep', 'lamb', 'pub'], ['sheep', 'lamb', 'bakery'],
-      ['depot', 'coffee', 'cafe'], ['depot', 'coffee', 'store'], ['depot', 'tea', 'store'], ['depot', 'parcel', 'post'],
+      ['depot', 'coffee', 'cafe'], ['depot', 'coffee', 'store'], ['depot', 'tea', 'store'], ['depot', 'tea', 'cafe'], ['orchard', 'fruit', 'cafe'], ['depot', 'parcel', 'post'],
       ['depot', 'fuel', 'power'], ['depot', 'ore', 'foundry'], ['recycling', 'scrap', 'foundry'], ['foundry', 'parts', 'hall'],
     ];
     let best = null;
