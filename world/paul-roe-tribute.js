@@ -95,7 +95,7 @@ export function honourPaulRoe(house) {
     ...r,props:r.props.map(p=>[p[0],p[1],p[2]?{...p[2]}:undefined]),
   }));
   return {
-    ...house,memorial:true,kind:primary?'Paul Roe memorial':'Quiet remembrance',
+    ...house,memorial:true, // Preserve exterior kind (Memorial Chapel / Private project).
     summary:primary
       ? 'Remembering Paul Roe: Outback historian, storyteller, teacher, Cornerstone co-founder and a man of Christian faith. Explore his published stories, recordings, books and approved memories.'
       : 'A quiet reflection on Paul Roe’s life and the stories he shared. Private correspondence and research remain private.',
