@@ -6,9 +6,10 @@ import { loadSave, writeSave, clearSave } from './engine/save.js';
 import { discoveryProgress } from './ui/discovery-log.js';
 import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
-import { honourPaulRoe } from './world/paul-roe-tribute.js';
 import { buildCivicInterior } from './world/shop-interior.js';
-import { wasteDepotPanel } from './ui/waste-depot-panel.js';
+import { surfaceAt, roomFloor } from './world/surfaces.js';
+import { FIELD_Z0 } from './world/life.js';
+import { emergencyPanel,justicePanel } from './ui/emergency-panels.js';
 import { civicExitPose } from './world/shop-exit.js';
 import { populateShopStaff } from './world/shop-staff.js';
 import { createShopVisitors } from './world/shop-visitors.js';
@@ -48,7 +49,7 @@ async function start() {
   // Archive contents (READMEs, file lists) are large, so they load on first use.
   let archive = null;
   setArchiveLoader(() => (archive = archive || (window.__REPO_DATA__ ? Promise.resolve(window.__REPO_DATA__) : fetch('repo-data.json').then((r) => (r.ok ? r.json() : {})).catch(() => ({})))));
-  const houses = data.houses.map(honourPaulRoe);
+  const houses = data.houses;
   const byCoord = new Map(houses.map((h) => [h.coordinate, h]));
 
   const touch = matchMedia('(pointer: coarse)').matches;
@@ -259,11 +260,8 @@ async function start() {
     const yawIn = player.yaw;
     // A villager's own home also has their kitchen, bathroom and laundry, and living room.
     const resident = life.villagers.find((v) => v.home.coordinate === coord);
-    const base = byCoord.get(coord);
-    // Memorial buildings are public galleries, not a randomly assigned NPC home.
-    // Never append generic kitchen, bathroom/laundry or living room overlays.
-    const h = resident && !base.memorial ? { ...base, household: resident.name } : base;
-    const floors = h.memorial ? null : createFloorStack(h, makeLabel);
+    const h = resident ? { ...byCoord.get(coord), household: resident.name } : byCoord.get(coord);
+    const floors = createFloorStack(h, makeLabel);
     const built = floors ? floors.levels[0] : buildInterior(h, makeLabel);
     // Every storey shares the ground floor's frame: front door at the interior's exit, facing +z
     // like the house itself, so the windows look out on the real street (src/world/windows.js).
@@ -321,11 +319,12 @@ async function start() {
     scene.add(built.group);town.group.visible=false;
     scene.background.set(INDOOR);scene.fog=null;
     world=new CollisionWorld(built.colliders);
-    // Render the living TownLife customers as real visitors inside the room.
+    // The same TownLife villagers that shop, eat and work here now have
+    // visible bodies, independent of the staff member behind the counter.
     inside.visitors=createShopVisitors(site,life,inside,makeLabel,inside.people);
     player.place(built.spawn.x,built.spawn.z,keepFacing ? yawIn - doorTurn(site) : 0);
     mode='house';$('btn-exit').hidden=false;
-    closePanel();npcChat.close();ambience.door();
+    closePanel();npcChat.close();ambience.door();ambience.shopBell();
     $('card').hidden=true;delete $('card').dataset.coord;
     status('Inside '+site.name+'. Walk to the counter or back through the entrance to leave.');
     return true;
@@ -415,6 +414,7 @@ async function start() {
   syncPerfBtn();
   $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
   $('btn-guide').onclick = () => openPanel(guideContent(), guideSpot);
+  $('btn-000').onclick = () => openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),guideSpot);
   $('btn-discoveries').onclick = () => openPanel(discoveryContent(), guideSpot);
   $('btn-wallet').onclick = () => openPanel(walletPanel(life, { go: (id) => { goPlace(id); return null; } }), guideSpot);
   $('btn-help').onclick = () => { input.releaseMouse(); $('help').hidden = !$('help').hidden; };
@@ -598,9 +598,11 @@ async function start() {
         openPanel(householdPanel(life,inside.house.household,thing.act.what),thing);
         return;
       }
-      if(inside?.place?.id==='landfill'&&thing.act?.do==='waste-depot-status'){
-        openPanel(wasteDepotPanel(life,thing.key.split(':')[1]),thing);
-        return;
+      if(inside?.place&&thing.act?.do==='emergency'){
+        openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),thing);return;
+      }
+      if(inside?.place&&thing.act?.do==='justice'){
+        openPanel(justicePanel(life),thing);return;
       }
       if(inside?.place&&thing.act?.do==='civic-ledger'){
         const p=inside.place;
@@ -802,7 +804,8 @@ async function start() {
       let truck = Infinity; for (const tr of life.trucks) truck = Math.min(truck, Math.hypot(tr.x - player.pos.x, tr.z - player.pos.z));
       const busy = Math.min(1, townLife.people.filter((p) => !p.v.inside && Math.abs(p.v.x - player.pos.x) < 25 && Math.abs(p.v.z - player.pos.z) < 25).length / 5);
       for (const e of townLife.events.splice(0)) ambience.play(e, mode === 'house' ? 300 : Math.hypot(e.x - player.pos.x, e.z - player.pos.z));
-      ambience.update(dt, { day: life.daylight(), busy: mode === 'town' ? busy : 0, truck: mode === 'town' ? truck : Infinity, indoors: mode === 'house', room: inside?.place?.id || (inside ? 'house' : ''), moving: movedDist > 0.015, running: movedDist > dt * 5.2 });
+      const wxyz = mode === 'town' ? [life.place('waterworks'), life.place('sewage')].filter(Boolean).reduce((m, q) => Math.max(m, 1 - Math.hypot(player.pos.x - q.x, player.pos.z - (FIELD_Z0 + 6)) / 40), 0) : 0;
+      ambience.update(dt, { day: life.daylight(), busy: mode === 'town' ? busy : 0, truck: mode === 'town' ? truck : Infinity, indoors: mode === 'house', room: inside?.place?.id || (inside ? 'house' : ''), weather: life.civic.weather, water: Math.max(0, wxyz), surface: mode === 'house' ? roomFloor(inside?.place?.id || 'house') : surfaceAt(player.pos.x, player.pos.z), stepPhase: player.bob, moving: movedDist > 0.015, running: movedDist > dt * 5.2, crouching: player.eye < 1.3, airborne: player.y > 0, hour: life.minute / 60, dayNumber: life.day });
     }
 
     if (mode === 'town') {
@@ -934,24 +937,13 @@ async function start() {
         if (input.consume('use')) use();
         animate(inside.dynamics, t, active);
         inside.visitors?.update(dt,t,player);
+        // Shop patrons are synchronised with the authoritative town economy
+        // above; they have their own movement and seated animation.
         for (const p of inside.people || []) if(!p.key?.startsWith('visitor:'))p.update(dt,t,player,p.plan);
         if (cardTimer > 0 && (cardTimer -= dt) <= 0) $('card').hidden = true;
         // Labels hide when the player is right on top of them so they never fill the screen,
         // and when a wall or closed door stands between them and the camera.
-        // Labels belong to one room: a sign for Bathroom must never appear
-        // over a Living room wall or read as directions into the wrong room.
-        const currentRoom = inside.rooms.findIndex(r =>
-          player.pos.x >= r.x0 && player.pos.x <= r.x1 &&
-          player.pos.z >= r.z0 && player.pos.z <= r.z1);
-        const labelEye = new THREE.Vector3(camera.position.x,
-          camera.position.y - (inside.floorIndex || 0) * FLOOR_HEIGHT,camera.position.z);
-        for (const s of inside.group.children) if (s.isSprite) {
-          const belongsHere = s.userData.labelRoom == null ||
-            s.userData.labelRoom === currentRoom;
-          const nearEnough = Math.hypot(s.position.x-player.pos.x,s.position.z-player.pos.z) >
-            (s.userData.labelKind === 'room' ? 2.6 : 1.3);
-          s.visible = belongsHere && nearEnough && labelVisible(labelEye,s.position,inside.sight);
-        }
+        for (const s of inside.group.children) if (s.isSprite) s.visible = Math.hypot(s.position.x - player.pos.x, s.position.z - player.pos.z) > (s.userData.labelKind === 'room' ? 2.6 : 1.3) && labelVisible(new THREE.Vector3(camera.position.x, camera.position.y - (inside.floorIndex || 0) * FLOOR_HEIGHT, camera.position.z), s.position, inside.sight);
       }
     }
     if (mode === 'town') input.consume('use');
@@ -971,9 +963,6 @@ async function start() {
     npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),
     talkTo: (id) => npcChat.show(id),
     travel,
-    // Reliable test-only direct entry, for regression testing authored homes.
-    enterHouse:(coord)=>{if(!byCoord.has(coord))return false;if(mode==='house')leave(false);enter(coord);return true;},
-    exitHouse:()=>{if(mode!=='house'||inside?.place)return false;leave();return true;},
     state: () => ({
       mode, driving: driving.activeVehicle()?.registration||null, nearbyVehicle:nearCar?.registration||null, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
       seats: mode==='house' ? (inside?.seats||[]).map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos,room:x.room})) : townLife.seats.map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos})),
@@ -983,7 +972,7 @@ async function start() {
       near: nearThing?.key || null, nearNPC: nearNPC?.npc.id || null, nearHouse: nearHouse?.house.coordinate || null,
       panel: panelOpen ? { title: $('panel-title').textContent, text: $('panel-body').textContent, links: [...$('panel-actions').querySelectorAll('a')].map((a) => a.href), buttons: [...$('panel-actions').querySelectorAll('button')].map((b) => b.textContent) } : null,
       people: (mode === 'town' ? townLife.people.map((p) => ({ key: p.key, name: p.v.name, job: p.v.job, x: p.v.x, z: p.v.z, inside: p.v.inside, activity: p.v.activity, visible: p.fig.group.visible })) : (inside?.people || []).map((p) => ({ key: p.key, name: p.name, x: p.pos.x, z: p.pos.z, room: p.room, activity: p.activity, state:p.state||'staff', visible:p.group.visible }))),
-      time: life.time(), day: life.day, minute: life.minute, speed: life.speed, daylight: life.daylight(), sound: ambience.on, needs:life.needsReport(),
+      time: life.time(), day: life.day, minute: life.minute, speed: life.speed, daylight: life.daylight(), sound: ambience.on, soundDebug: { ...ambience.debug }, needs:life.needsReport(),
       nearPerson: nearPerson?.key || null,
       active: [...active], playing: playing?.id || null, gameSrc: playing ? $('game-frame').getAttribute('src') : null, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, renderPixelRatio,
     }),
@@ -1058,6 +1047,7 @@ async function start() {
     life: {
       ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
       // Jumps the clock (tests): everyone re-plans their day from scratch.
+      setWeather(w) { life.civic.weather = w; },
       setTime(minute) { life.minute = minute; life.stats = life.freshStats(); for (const v of life.villagers) { v.step = null; v.path = []; v.queue = []; v.doneToday = {}; } },
       run(minutes) { for (let m = 0; m < minutes; m += 0.5) life.tick(0.5); },
       // A villager's live route and plan, for diagnosing where people walk.

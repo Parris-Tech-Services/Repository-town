@@ -1,9 +1,10 @@
+import { buildPowerInterior } from './power-interior.js';
 import { buildDepotInterior } from './depot-interior.js';
 import { buildWaterworksInterior } from './waterworks-interior.js';
 import { buildWastewaterInterior } from './wastewater-interior.js';
 import { buildRecyclingInterior } from './recycling-interior.js';
 import { buildRealtyInterior } from './realty-interior.js';
-import { buildWasteDepotInterior } from './waste-depot-interior.js';
+import { buildJusticeInterior } from './justice-interiors.js';
 import { buildFireInterior } from './fire-interior.js';
 import { buildMillInterior } from './mill-interior.js';
 import * as THREE from 'three';
@@ -46,6 +47,10 @@ const FITTINGS = {
   'town-hall':['Public meeting hall','Public service desk','Town notices',0xbaaa83,'Council decisions, elections and public services','Citizens meet here to discuss the town budget and propose new projects.'],
   bank:['Banking hall','Teller counter','Account records',0x6c9fba,'Deposit and withdraw Town Credits','Money, wages and civic spending are recorded by the Community Bank.'],
   realty:['Repository Realty','Property reception','Local property records',0x527b71,'Ask for property details','Real estate agents can explain the town property directory, inspections and leasing.'],
+  police:['Police station','Public station counter','Incident room',0x3e648a,'Speak to NSW Police','Reports, investigations, evidence and custody.'],
+  ambulance:['Ambulance station','Call response desk','Clinical response',0xae414c,'Check ambulance services','Calls are dispatched by the emergency operations centre.'],
+  court:['Local Court','Court registry','Courtroom',0x927a58,'See court lists','Magistrates hear criminal matters and bail requests.'],
+  solicitor:['Solicitors','Client reception','Private consultations',0x33635a,'Enquire about legal help','Client confidentiality and independent legal advice.'],
   post:['Post office','Postal counter','Sorting shelves',0xce8e63,'Send a parcel or check deliveries','Mail is collected, sorted and delivered by the town posties.'],
   market:['Market hall','Fresh produce stall','Produce crates',0x90ad67,'Buy fresh produce','The shelves are stocked by the farm, mill and other local producers.'],
   bakery:['Bakery kitchen','Bread counter','Bakery ovens',0xdca765,'Buy fresh bread','Flour arrives from the mill. The bakery turns it into loaves each day.'],
@@ -70,6 +75,7 @@ const FITTINGS = {
 };
 const BASE_W=14, BASE_D=18, FRONT=6, BACK=-12, EDGE=7;
 
+// `life` is optional: interiors that show the town's live state (the power station's mimic panel) read it.
 export function buildCivicInterior(site,makeLabel,life=null) {
   // A family's home must never regress to the single-room retail fallback.
   if(site.id==='farmhouse')return buildFarmhouseInterior(site,makeLabel);
@@ -84,7 +90,7 @@ export function buildCivicInterior(site,makeLabel,life=null) {
   if(site.id==='sewage')return buildWastewaterInterior(site,makeLabel,life);
   if(site.id==='recycling')return buildRecyclingInterior(site,makeLabel,life);
   if(site.id==='realty')return buildRealtyInterior(site,makeLabel,life);
-  if(site.id==='landfill')return buildWasteDepotInterior(site,makeLabel,life);
+  if(['police','ambulance','court','solicitor'].includes(site.id))return buildJusticeInterior(site,makeLabel,life);
   if(site.id==='mill')return buildMillInterior(site,makeLabel,roomTitle);
   if(site.id==='bakery')return buildBakeryInterior(site,makeLabel,roomTitle);
   // The bank: queue lane, tellers at the back, advice desks, private office, ATMs, vault.
@@ -99,6 +105,7 @@ export function buildCivicInterior(site,makeLabel,life=null) {
   if(site.id==='butcher')return buildButcherInterior(site,makeLabel,roomTitle);
   if(site.id==='school')return buildSchoolInterior(site,makeLabel,roomTitle);
   if(site.id==='fire')return buildFireInterior(site,makeLabel,roomTitle);
+  if(site.id==='power')return buildPowerInterior(site,makeLabel,roomTitle,life);
   if(FARM_SHED_IDS.includes(site.id))return buildFarmInterior(site,makeLabel,roomTitle);
   const group=new THREE.Group();
   group.name='Inside '+site.name;
