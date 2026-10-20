@@ -10,7 +10,7 @@ export const WASTE_DEPOT_LAYOUT=Object.freeze({
  zones:['Weigh-in / service office','Covered waste receival','Public safety route',
    'Controlled tipping bay','Quarantine and rejected loads','Compaction and skip transfer',
    'Drainage, ventilation and staff hygiene'],
- staff:{pos:{x:-4.50,z:1.8},use:{x:-3.22,z:3.2}}
+ staff:{pos:{x:-4.50,z:1.3},use:{x:-3.22,z:3.2}}
 });
 
 export function buildWasteDepotInterior(site,makeLabel,life=null){
@@ -130,7 +130,7 @@ export function buildWasteDepotInterior(site,makeLabel,life=null){
  cyl(.18,.18,1.30,3.74,1.64,-2.54,c.steel,{rz:Math.PI/2});
  box(.75,.19,.26,4.35,1.68,-2.54,0xadbdb8);
  add('compactor','Inspect guarded waste compaction unit','waste-depot-status',
-   'A compactor and sealed roll-off container reduce handling movements. Its access guards and isolation points prevent public operation. There is no gameplay button to start it.',2.48,-2.56);
+   'A compactor and sealed roll-off container reduce handling movements. Its access guards and isolation points prevent public operation. There is no gameplay button to start it.',2.22,-2.56);
  // Rear right: quarantine shelter and spill kit, not ordinary refuse bays.
  text('REJECTED LOAD QUARANTINE',4.30,3.07,-5.35);
  rail(1.72,-8.65,5.80,c.yellow);
@@ -151,9 +151,9 @@ export function buildWasteDepotInterior(site,makeLabel,life=null){
  box(.28,.11,4.15,5.85,.035,-8.8,c.dark); // contained drain
  for(let i=0;i<7;i++)box(.04,.013,.42,5.85,.094,-10.47+i*.56,0xaeb8b2);
  add('quarantine','Review spill and hazardous-waste containment','waste-depot-status',
-   'Problem waste is isolated in a contained and ventilated area with spill-response equipment. No hazardous liquids, batteries or sharps can be manipulated by visitors.',2.4,-8.3);
+   'Problem waste is isolated in a contained and ventilated area with spill-response equipment. No hazardous liquids, batteries or sharps can be manipulated by visitors.',2.08,-8.3);
  add('drain','Inspect contained drainage and runoff design','waste-depot-status',
-   'Bunds, roof cover, controlled drainage and litter screens aim to prevent contaminated washwater or rainfall leaving the handling area. This is a visual illustration, not a functioning treatment system.',2.45,-10.2);
+   'Bunds, roof cover, controlled drainage and litter screens aim to prevent contaminated washwater or rainfall leaving the handling area. This is a visual illustration, not a functioning treatment system.',2.08,-10.2);
  // A closed shutter signals outdoor truck loading is NOT player accessible.
  box(2.85,2.80,.09,0,1.43,-11.80,c.beam);
  for(let i=0;i<13;i++)box(2.76,.038,.07,0,.2+i*.19,-11.73,0x9ba7a3);
