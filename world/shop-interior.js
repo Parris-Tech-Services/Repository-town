@@ -1,3 +1,5 @@
+import { buildFireInterior } from './fire-interior.js';
+import { buildMillInterior } from './mill-interior.js';
 import * as THREE from 'three';
 import { containLabel } from '../ui/labels.js';
 import { buildFarmhouseInterior } from './farmhouse-interior.js';
@@ -63,6 +65,7 @@ export function buildCivicInterior(site,makeLabel) {
   const [roomTitle,deskName,featureName,accent,deskInfo,featureInfo] =
     FITTINGS[site.id] || [site.name,'Service desk','Town noticeboard',0x98a8b3,'Visit this workplace','This building supports the town.'];
   // The bakery has its own researched layout: shop floor, counter and a visible production kitchen.
+  if(site.id==='mill')return buildMillInterior(site,makeLabel,roomTitle);
   if(site.id==='bakery')return buildBakeryInterior(site,makeLabel,roomTitle);
   // The bank: queue lane, tellers at the back, advice desks, private office, ATMs, vault.
   if(site.id==='bank')return buildBankInterior(site,makeLabel,roomTitle);
@@ -75,6 +78,7 @@ export function buildCivicInterior(site,makeLabel) {
   if(site.id==='greengrocer')return buildGrocerInterior(site,makeLabel,roomTitle);
   if(site.id==='butcher')return buildButcherInterior(site,makeLabel,roomTitle);
   if(site.id==='school')return buildSchoolInterior(site,makeLabel,roomTitle);
+  if(site.id==='fire')return buildFireInterior(site,makeLabel,roomTitle);
   if(FARM_SHED_IDS.includes(site.id))return buildFarmInterior(site,makeLabel,roomTitle);
   const group=new THREE.Group();
   group.name='Inside '+site.name;
