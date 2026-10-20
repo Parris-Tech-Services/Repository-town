@@ -8,6 +8,7 @@ import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { honourPaulRoe } from './world/paul-roe-tribute.js';
 import { buildCivicInterior } from './world/shop-interior.js';
+import { emergencyPanel,justicePanel } from './ui/emergency-panels.js';
 import { wasteDepotPanel } from './ui/waste-depot-panel.js';
 import { civicExitPose } from './world/shop-exit.js';
 import { populateShopStaff } from './world/shop-staff.js';
@@ -415,6 +416,7 @@ async function start() {
   syncPerfBtn();
   $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
   $('btn-guide').onclick = () => openPanel(guideContent(), guideSpot);
+  $('btn-000').onclick = () => openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),guideSpot);
   $('btn-discoveries').onclick = () => openPanel(discoveryContent(), guideSpot);
   $('btn-wallet').onclick = () => openPanel(walletPanel(life, { go: (id) => { goPlace(id); return null; } }), guideSpot);
   $('btn-help').onclick = () => { input.releaseMouse(); $('help').hidden = !$('help').hidden; };
@@ -601,6 +603,12 @@ async function start() {
       if(inside?.place?.id==='landfill'&&thing.act?.do==='waste-depot-status'){
         openPanel(wasteDepotPanel(life,thing.key.split(':')[1]),thing);
         return;
+      }
+      if(inside?.place&&thing.act?.do==='emergency'){
+        openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),thing);return;
+      }
+      if(inside?.place&&thing.act?.do==='justice'){
+        openPanel(justicePanel(life),thing);return;
       }
       if(inside?.place&&thing.act?.do==='civic-ledger'){
         const p=inside.place;
