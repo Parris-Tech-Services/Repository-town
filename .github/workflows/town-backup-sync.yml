@@ -132,3 +132,4 @@ jobs:
             git -C site push origin HEAD:main
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds" --silent
+# Verified release sync requested for source 7d7388bb3515b22161fa83eb33e2558f933d6e2c
