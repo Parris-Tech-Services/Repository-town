@@ -1,0 +1,82 @@
+name: Mirror approved Repository Town release
+on:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/town-backup-sync.yml']
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: town-production-backup
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          path: site
+      - name: Read the approved live release
+        id: production
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 2 --max-time 30 https://repository-town-claude-complete.vercel.app/release.json > production.json
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const r=JSON.parse(fs.readFileSync('production.json','utf8'));
+          if(!/^[a-f0-9]{40}$/.test(r.sourceCommit)||!/^[a-f0-9]{64}$/.test(r.contentHash))throw Error('Invalid production release');
+          const previous=JSON.parse(fs.readFileSync('site/release.json','utf8'));
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`sha=${r.sourceCommit}\nhash=${r.contentHash}\nchanged=${previous.sourceCommit!==r.sourceCommit||previous.contentHash!==r.contentHash}\n`);
+          JS
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        if: steps.production.outputs.changed == 'true'
+        with:
+          repository: joshualparris/JoshMemory
+          ref: ${{ steps.production.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        if: steps.production.outputs.changed == 'true'
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/repository-town/package-lock.json
+      - name: Prove source is approved and rebuild the exact release
+        if: steps.production.outputs.changed == 'true'
+        working-directory: source/repository-town
+        env:
+          TOWN_SOURCE_COMMIT: ${{ steps.production.outputs.sha }}
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$TOWN_SOURCE_COMMIT" origin/main
+          npm ci --no-audit --no-fund
+          npm run build:release
+      - name: Verify fingerprint and prepare generated backup
+        if: steps.production.outputs.changed == 'true'
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ steps.production.outputs.sha }}
+          EXPECTED_CONTENT_HASH: ${{ steps.production.outputs.hash }}
+        run: node source/repository-town/tools/sync-backup.mjs site
+      - name: Publish backup and explicitly request Pages build
+        if: steps.production.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ steps.production.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git -C site config user.name 'github-actions[bot]'
+          git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C site add -A
+          if ! git -C site diff --cached --quiet; then
+            git -C site commit -m "Mirror approved Town release $RELEASE_SHA"
+            git -C site push origin HEAD:main
+          fi
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds" --silent
