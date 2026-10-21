@@ -23,7 +23,7 @@ export function visitorHours(place) {
   return RECEPTION_HOURS[place.id] || [place.opens, place.closes];
 }
 export function onSiteWorkers(town, place) {
-  return (town.villagers || []).filter(v => workingAt(v, place.id));
+  return (town.villagers || []).filter(v => workingAt(v, place));
 }
 export function facilityAccess(town, place) {
   if (!place) return { allowed:false, reason:'unknown', message:'This entrance is unavailable.' };
