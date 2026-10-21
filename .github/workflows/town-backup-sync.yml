@@ -4,7 +4,7 @@ on:
     branches: [main]
     paths: ['.github/workflows/town-backup-sync.yml']
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17,47 * * * *'
   workflow_dispatch:
 permissions:
   contents: write
@@ -27,7 +27,7 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           path: source
-      - name: Pin canonical main and require successful release and WebGL verification
+      - name: Pin latest canonical main for independent verification
         id: verified
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,14 +41,9 @@ jobs:
             echo "GitHub Pages already mirrors verified source $sha"
             exit 0
           fi
-          # A merge commit can retain the exact reviewed tree but lacks its own
-          # WebGL run. Require its integration gate, then execute the complete
-          # browser playtest on this exact checked-out commit below.
-          count=$(gh api "repos/joshualparris/JoshMemory/actions/workflows/town-integration.yml/runs?head_sha=$sha&per_page=25" --jq "[.workflow_runs[] | select(.head_sha == \"$sha\" and .conclusion == \"success\")] | length")
-          if [[ "$count" -lt 1 ]]; then
-            echo "::error::Missing successful town integration for $sha; refusing an unverified release"
-            exit 1
-          fi
+          # Build, five simulation seeds and recorded desktop/mobile WebGL tests
+          # run in this job against this exact SHA. Do not depend on Vercel or
+          # upstream workflow completion, which can lag concurrent PR merges.
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "Publishing verified JoshMemory source $sha"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
