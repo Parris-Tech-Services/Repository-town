@@ -41,7 +41,7 @@ export function walletPanel(life, opts = {}) {
     body: `<p><b>Wallet:</b> ${d(me.wallet)} · <b>Savings at the bank:</b> ${d(me.bank)} · <b>Total:</b> ${d(me.wallet + me.bank)}</p>
       <p><b>Earned from work and trading:</b> ${d(cr.earned)} · <b>Spent in shops:</b> ${d(j.spent)} · <b>Bag:</b> ${bag}</p>
       <p><b>Overdue:</b> rent ${d(r.rentArrears)}, power ${d(r.powerArrears)} · <b>Loan:</b> ${cr.loan ? d(cr.loan.owed) + ' owing, due day ' + cr.loan.due : 'none'}</p>
-      <p class="dim">Rent $8 and power $2 come out each morning (from day 2), then PAYG tax is taken from wages. Bank counter: deposits, loans and bills.</p>
+      <p class="dim">Daily rent is charged only for an active signed lease; household electricity is charged only while you occupy a home. Hotel stays are paid at reception. PAYG is withheld from wages.</p>
       <p><b>Wages still owed to you:</b> TD ${d(j.wageDebt)}</p><h3>Recent receipts</h3><table class="ledger"><tr><th>When</th><th>What</th><th>Change</th></tr>${rows}</table>`,
     actions: [
       {label:'Timesheets and payslips',run:()=>payslipPanel(life,()=>walletPanel(life,opts))},
@@ -55,11 +55,11 @@ export function jobBoardPanel(life, opts = {}) {
   const j = life.jobsReport();
   const rows = JOB_BOARD.map((x) => {
     x=jobOffer(life,x);const p = life.place(x.site), done = j.doneToday.includes(x.id);
-    return `<tr><td>${esc(x.name)}</td><td>${esc(p.name)}</td><td>${x.minutes} min</td><td>${d(x.pay)}</td><td>${done ? 'Done today' : !life.open(p) ? 'Closed' : employerFunds(life,x.site)<x.pay||debtFor(life,x.site)>0 ? 'Not hiring: funds / wages owed' : 'Hiring'}</td></tr>`;
+    return `<tr><td>${esc(x.name)}</td><td>${esc(p.name)}</td><td>${x.minutes} min</td><td>${d(x.pay)}</td><td>${done ? 'Worked today · more possible' : !life.open(p) ? 'Closed' : employerFunds(life,x.site)<x.pay||debtFor(life,x.site)>0 ? 'Not hiring: funds / wages owed' : 'Hiring'}</td></tr>`;
   }).join('');
   return {
     title: '💼 Paid jobs', wide: true,
-    body: `<p>Earn real wages by working a shift inside a workplace while its staff are on duty. Up to ${MAX_SHIFTS_PER_DAY} shifts a day, one of each. Private employers pay from their own tills; public jobs use council funds. PAYG goes to the Commonwealth. Unpaid wages remain employer debt. Earned time survives early clock-out and midnight; task errors never reduce it. A five-minute paid break is available after 15 minutes. Figures are fictional Town Dollars.</p>
+    body: `<p>Earn real wages by working a shift inside a workplace while its staff are on duty. Up to eight paid town hours per day (480 minutes), subject to workplace hours, available funds and a safety limit of ${MAX_SHIFTS_PER_DAY} separate shifts. Repeat shifts at the same employer are possible. Private employers pay from their own tills; public jobs use council funds. PAYG goes to the Commonwealth. Unpaid wages remain employer debt. Earned time survives early clock-out and midnight; task errors never reduce it. A five-minute paid break is available after 15 minutes. Figures are fictional Town Dollars.</p>
       <table class="ledger"><tr><th>Job</th><th>Where</th><th>Time</th><th>Pay</th><th>Today</th></tr>${rows}</table>
       ${j.active ? `<p><b>Current shift:</b> ${esc(JOB_BOARD.find((x) => x.id === j.active.id).name)} · ${Math.floor(j.active.worked)}/${j.active.required} town minutes</p>` : ''}`,
     actions: [
@@ -105,7 +105,7 @@ export function jobPanel(life, site, back) {
         ' town minutes to work; '+def.tasks.filter(k=>!local.tasks.includes(k)).length+' duties remaining.')});
     actions.push({label:'Clock out early · keep earned pay',run:()=>flash(life.cancelJob().message)});
   }else{
-    body+='<p>No shift started here. Shifts completed today: '+j.shiftsToday+'/'+MAX_SHIFTS_PER_DAY+'.</p>';
+    body+='<p>No shift started here. Paid work today: '+(j.paidMinutesToday||0)+'/'+(j.paidMinutesLimit||480)+' town minutes · '+j.shiftsToday+' shifts completed.</p>';
     for(const base of defs){const def=jobOffer(life,base);actions.push({label:'Start '+def.name+' · '+def.minutes+' min · '+d(def.pay),
       run:()=>flash(life.startJob(def.id).message)});}
   }

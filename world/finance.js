@@ -105,8 +105,11 @@ export function dailyGrants(life) {
   const gst = Math.min(RATES.gstTopUp, Math.max(0, RATES.stateReserve - f.state), f.federal);
   if (gst > 0) { f.federal = r2(f.federal - gst); f.state = r2(f.state + gst); record(life, 'commonwealth', 'nsw', gst, 'GST distribution to NSW'); }
   const need = Math.max(0, RATES.councilReserve - c.treasury);
-  const fed = Math.min(RATES.federalGrant, f.federal, need);
-  const st = Math.min(RATES.stateGrant, f.state, Math.max(0, need - fed));
+  // Council transfers scale with the number of staffed households. Both caps remain
+  // limited by the real finite Commonwealth and NSW balances, so wages cannot mint cash.
+  const extra = Math.max(0, (life.villagers?.length || 38) - 38);
+  const fed = Math.min(RATES.federalGrant + 24 * extra, f.federal, need);
+  const st = Math.min(RATES.stateGrant + 12 * extra, f.state, Math.max(0, need - fed));
   f.federal = r2(f.federal - fed); f.state = r2(f.state - st);
   c.treasury = r2(c.treasury + fed + st);
   if (fed) record(life, 'commonwealth', 'council', fed, 'Commonwealth local services grant');
@@ -132,11 +135,16 @@ export function dailyClose(life) {
     if (paid) { revenue(life, label === 'rent' ? 'rent' : 'utilities', paid); record(life, 'visitor', 'council', paid, 'Your ' + label); }
     if (owe > 0) f.daily.unpaid = r2(f.daily.unpaid + owe);
   };
-  // Homeowners have no rent; investment owners without a home still rent.
-  const pr=c.property,holdsVacantHome=!!pr&&Object.values(pr.parcels).some(p=>p.owner==='visitor'&&p.kind==='house'&&!p.tenant);
-  const lease=pr?.playerLease&&pr.parcels[pr.playerLease];
-  bill(holdsVacantHome?0:(lease?.rent||RATES.visitorRent), 'rentArrears', 'rent');
-  bill(RATES.visitorPower, 'powerArrears', 'power');
+  // No rent without an actual lease. A hotel guest pays the hotel on booking;
+  // a homeowner only pays property ownership costs and utility use, not rent.
+  // Existing historic arrears are still collectible, but no phantom daily charges accrue.
+  const pr=c.property;
+  const lease=pr?.playerLease&&pr.parcels?.[pr.playerLease];
+  const ownerOccupied=!!pr&&Object.values(pr.parcels||{}).some(p=>
+    p.owner==='visitor'&&p.kind==='house'&&(!p.tenant||p.tenant==='visitor'));
+  const occupying=!!(lease?.tenant==='visitor'||ownerOccupied);
+  bill(lease?.tenant==='visitor' ? lease.rent : 0, 'rentArrears', 'rent');
+  bill(occupying ? RATES.visitorPower : 0, 'powerArrears', 'power');
   if (f.rentArrears + f.powerArrears > 0) life.log('Your rent and power are overdue. Pay them at the Community Bank.');
   // Villager households (src/world/household.js): renters pay the council's housing office, buyers
   // repay the Community Bank, and overdue power and water bills are collected by direct debit.

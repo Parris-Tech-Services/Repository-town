@@ -5,6 +5,7 @@ import { Builder, GLASS } from './builder.js';
 import { buildSignBoards } from './shop-signs.js';
 import { PROPS } from './props.js';
 import { makePerson, pose } from './npcs.js';
+import { facilityAccess } from './facility-access.js';
 import { TownLife, GOODS, RAIL_Z, trainX, FIELD_Z0, FIELD_Z1, SEC_PER_MIN, LOT_X, AVENUES } from './life.js';
 
 // Draws the town simulation (src/world/life.js): the high street and farms on street 8,
@@ -83,7 +84,12 @@ function fence(b, x0, x1, z0, z1, gateX) {
 // Painted name boards (src/world/shop-signs.js), in each lot's frame: [x, y, z, w, h, background, lettering].
 // Shopfronts paint over their existing board (w × h of the building decides its size).
 const SHOPFRONT = { store: [14, 5], bakery: [12, 4.6], cafe: [12, 4.4], greengrocer: [12, 4.4], butcher: [11, 4.4], post: [11, 4.6], clinic: [12, 4.6] };
-const SIGN_AT = {
+export const SIGN_AT = {
+  // Permanent painted nameplates exactly over the currently blank upper shopfront
+  // panels (y = facade height - 0.55, z = front 7.13). Unlike nearby name
+  // sprites, these remain readable even when proximity labels are hidden.
+  soyfarm: [0, 3.75, 7.135, 7.12, 0.69, '#254632', '#f7f2df'],
+  soyplant: [0, 4.75, 7.135, 8.36, 0.71, '#264c57', '#f3f7f5'],
   pub: [0, 6.15, 7.08, 7, 0.9, '#1f3a2a', '#f1e3b5'], hall: [0, 7.1, 7.99, 11, 0.62, '#d8d2c4', '#3a3226'],
   school: [0, 3.9, 7.07, 6, 0.7, '#f3ead2', '#2a3a5a'], depot: [0, 3.9, 7.07, 6, 0.7, '#2b2118', '#f1e3b5'],
   mill: [0, 3.2, 4.06, 2.6, 0.55, '#f3ead2', '#3a2a1e'], bank: [0, 5.62, 7.83, 9, 0.55, '#e8e2d2', '#3a3226'],
@@ -104,6 +110,20 @@ const SHOP_COLOURS = { store: ['#2f6b8c', '#f6f1e2'], bakery: ['#8a5a2a', '#f8ec
 
 // Returns { w, d } of the solid front block so the town can collide with it.
 const BUILD = {
+  soyfarm(b) {
+    shopfront(b, 12, 8, 4.3, 0xb6a982, 0x568047, [0x79984d, 0xd7c78b]);
+    // Seed-grading shed, rainwater tanks and a small covered loading platform.
+    b.cyl(0x839b8f, 0.85, 2.2, 4.6, 1.1, 3.0);
+    b.box(0x916d45, 2.2, 0.2, 1.2, -4.2, 0.45, 9.5);
+    return {w:12,d:8};
+  },
+  soyplant(b) {
+    shopfront(b, 14, 9, 5.3, 0xc5d4d4, 0x477d88, [0x598a96, 0xe3f1ee]);
+    b.cyl(0xabbfc7, 1.1, 3.1, -4.5, 1.55, 2.3);
+    b.cyl(0x9eb1bb, .8, 2.5, 4.2, 1.25, 2.5);
+    b.box(0x7297a2, 3.8, .5, 1.1, 0, 2.0, 1.1);
+    return {w:14,d:9};
+  },
   store(b) { shopfront(b, 14, 10, 5, 0xd9c8a0, 0x6a4a2e, [0x2f6b8c, WHITE]); table(b, -4.2, 8.6); table(b, 4.2, 8.6); return { w: 14, d: 10 }; },
   bakery(b) { shopfront(b, 12, 9, 4.6, 0xf0dcc0, 0x8a5a2a, [0xc8553d, 0xf2e2c2]); table(b, -3.6, 8.6); table(b, 3.6, 8.6); b.cyl(0x9a958c, 0.45, 2.2, 4.5, 5.6, 0.5); return { w: 12, d: 9 }; },
   cafe(b) {
@@ -425,7 +445,20 @@ function buildField(p, group, statics, glass) {
   const b = statics;
   b.box(0x7a5a3a, w, 0.03, d, cx, 0.015, cz);            // tilled soil or pasture base
   const dyn = { update() {} };
-  if (p.id === 'silo' || p.id === 'garden') {
+  if (p.id === 'soyfarm') {
+    // Soy plants are crop rows, not livestock. One instanced mesh keeps phone draw calls low.
+    const rows=8,per=12;
+    const geo=new THREE.SphereGeometry(.24,7,5);
+    const mat=new THREE.MeshLambertMaterial({color:0x65a04b});
+    const crop=new THREE.InstancedMesh(geo,mat,rows*per);
+    const tr=new THREE.Matrix4();
+    for(let i=0;i<rows;i++)for(let j=0;j<per;j++){
+      tr.makeTranslation(f.x0+1+(j+.5)*(w-2)/per,.35,f.z0+1+(i+.5)*(d-2)/rows);
+      crop.setMatrixAt(i*per+j,tr);
+    }
+    crop.instanceMatrix.needsUpdate=true;group.add(crop);
+    dyn.update=()=>{crop.visible=p.growth>0.01;crop.scale.y=.2+Math.min(1,p.growth)*3;};
+  } else if (p.id === 'silo' || p.id === 'garden') {
     const rows = p.id === 'silo' ? 10 : 8, per = p.id === 'silo' ? 1 : 14;
     const geo = p.id === 'silo' ? new THREE.BoxGeometry(w - 2, 1, 1.4) : new THREE.SphereGeometry(0.32, 8, 6);
     geo.translate(0, 0.5, 0);
@@ -616,6 +649,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
       spots.push({ key: `place:${p.id}`, id: p.id, pos: new THREE.Vector3(p.x, 0, FIELD_Z0 - 2.4), label: `${p.name} — ${{ bank: 'your account', fire: 'station board', foundry: 'the works' }[p.id] || 'the plant'}` });
       const at = SIGN_AT[p.id];   // turned to face the road, like the building
       if (at) signs.push({ text: p.name, x: p.x - at[0], y: at[1], z: FIELD_Z0 + 7 - at[2], w: at[3], h: at[4], rotY: Math.PI, bg: at[5], fg: at[6] });
+      if(p.field)fields.push({p,...buildField(p,group,statics,statics.glass)});
       finish();
       continue;
     }
@@ -876,7 +910,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     town.setNight(powered ? dark : dark * 0.04, m);
     const anyOpenLate = dark > 0.2;
     shopGlassMat.emissiveIntensity = anyOpenLate && powered ? dark * 0.9 : 0;
-    for (const d of doorCards) d.m.material = life.open(d.q) ? d.openMat : d.closedMat;
+    for (const d of doorCards) d.m.material = facilityAccess(life, d.q).allowed ? d.openMat : d.closedMat;
     lightMat.emissiveIntensity = dark > 0.3 ? 1.4 : 0;  // vehicle headlights run on their own batteries
     if (!inTown && !view) return;
 
