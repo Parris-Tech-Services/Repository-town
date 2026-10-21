@@ -1,12 +1,9 @@
-# Agents: this repository is generated — edit the source instead
+# Generated Repository Town backup
 
-Everything here except this file, `README.md` and `.nojekyll` is the public build of
-Repository Town (`dist/public`). The source lives in **joshualparris/JoshMemory**, branch
-`ccr-846db548-0l5zmu`, folder `repository-town/` — read `repository-town/AGENTS.md` and
-`repository-town/COORDINATION.md` there first.
+Canonical source: joshualparris/JoshMemory, main, repository-town/. Read its AGENTS.md and COORDINATION.md before changing code. This repository contains the public build only. Do not hand-edit game files.
 
-Edits made only here are overwritten by the next publish. If you must hot-fix the live
-site, make the same change in `repository-town/src/` in the same sitting and note it in
-`COORDINATION.md`, so other sessions (Claude, Codex, …) keep your work.
+Production: https://repository-town-claude-complete.vercel.app/
+Staging: https://repository-town-main-qa.onrender.com/
+Backup: https://parris-tech-services.github.io/Repository-town/
 
-Never commit API keys or private repository names here: this repository is public.
+The backup sync rebuilds the exact live production commit, requires an identical content fingerprint, and refuses to overwrite unported live-only edits. Use the archived pre-consolidation branch for historic copies. No secrets or private repository evidence may be published here.
