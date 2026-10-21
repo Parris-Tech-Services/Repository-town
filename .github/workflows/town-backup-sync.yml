@@ -1,5 +1,5 @@
 name: Mirror verified Repository Town main to GitHub Pages
-# This independent release gate also verifies store batch-inspection feedback
+# This independent release gate also verifies expanded public hours and safe staffing
 # so the returns-cage choice cannot silently leave an unchanged modal open.
 on:
   push:
