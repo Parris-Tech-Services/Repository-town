@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "69ffe0771da2c066d1c7590ca494ab5112d7c00e",
-  "contentHash": "fd8b055424f7d098e1d1458af9fc0a600d12cfa7e15ab1ac28b57420d9fc0ab3",
+  "sourceCommit": "744efea01d00bf7a7a446ec0e143a4c138a23029",
+  "contentHash": "21c933ec155ad8f9a1bb6738b3e14c7490dc1c0de6f6a77e1f6f16d95aceeafd",
   "production": "https://repository-town-claude-complete.vercel.app/",
   "staging": "https://repository-town-claude-playtest.vercel.app/",
   "backup": "https://parris-tech-services.github.io/Repository-town/",
@@ -128,7 +128,7 @@
     "assets/furniture/table_small.bin": "e18bad66ad227a4a374fd58fbe6870a73c0f3f3687cb363506e0d77e07964066",
     "assets/furniture/table_small.gltf": "6ae46ef60d18cf1fe507fbb2fb20235144af2ac7101f410269a761ac91ae9aee",
     "backup-unified/index.html": "f79d20b29ec4d0b7764b557f377572792ad8ac50580d61035c7ee3a0dc936d43",
-    "companion-knowledge.json": "3852763d5dcd53ab125da6fde75eba83586905d6d15eaab9fac61ad8e7c4d5c6",
+    "companion-knowledge.json": "1e918266c82710e158c708b5de34d20f80e7103830b0adfb2434b8e2f2868fae",
     "engine/collision.js": "95f34e2a1d108660fe1310bb9d9e996e1464a0b9ef210e2f00a1334b2ac434dc",
     "engine/input.js": "a8ab39bed3f52ac896ef92600910fc16938021c0b7d8d3bc6b698ab20f402370",
     "engine/player.js": "311677fa6f0530c2533cf015d56d03b0f203dc0952ccc8a9132d6c538e1cebc1",
@@ -1136,7 +1136,7 @@
     "world/windows.js": "2bff3b62d274563c765d886a9a280b36457fe689af21dc60d15d45af1cdc2e2a",
     "world/work-contracts.js": "89bbeed008263a0a477b12007a751fbdaef78c6543813746cb505f4ff3fdbadf",
     "world/work-recipes.js": "2b669a27af66b204213df446096db1dbdda14557f25a028af0cf89cb2645e310",
-    "world/workplay-view.js": "e23d5acb55e336cfce243ca130ec4e370b72b7fffabaa44000422751173eaba1",
+    "world/workplay-view.js": "d1732659740ce8adb72526e2244478c2ec04043564467f52035839de66e4ae02",
     "world/workplay.js": "f6641766e8e64dddbff6d348b010f2b5bc9bb077072765bf4fba036f3d30036f"
   }
 }
