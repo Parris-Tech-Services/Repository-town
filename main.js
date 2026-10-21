@@ -1,3 +1,5 @@
+import {installWorkplay} from './world/workplay-view.js';
+import { mountCompanion } from './ui/companion.js';
 import * as THREE from 'three';
 import { CollisionWorld } from './engine/collision.js';
 import { Input } from './engine/input.js';
@@ -8,6 +10,7 @@ import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { honourPaulRoe } from './world/paul-roe-tribute.js';
 import { buildCivicInterior } from './world/shop-interior.js';
+import { installPhysicalJobs, usePhysicalJob } from './world/physical-jobs.js';
 import { wasteDepotPanel } from './ui/waste-depot-panel.js';
 import { surfaceAt, roomFloor } from './world/surfaces.js';
 import { FIELD_Z0 } from './world/life.js';
@@ -28,11 +31,14 @@ import { mountNPCChat } from './ui/npc-chat.js';
 import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
 import { separatePedestrians, steerPedestrians } from './world/pedestrian-spacing.js';
 import { createTownLife } from './world/townlife.js';
+import { createEmergencyResponseVisuals } from './world/emergency-response-visuals.js';
 import { createPlayerDriving } from './world/player-driving.js';
 import { nearestSeat } from './world/seats.js';
 import { furniturePanel } from './ui/furniture.js';
 import { createAmbience } from './ui/ambience.js';
 import { bakeryKitchenPanel } from './ui/bakery-panel.js';
+import { superviseBread } from './world/bakery-production.js';
+import { installBakeryImmersion } from './world/bakery-immersive.js';
 import { walletPanel, jobBoardPanel } from './ui/economy-panels.js';
 import { placePanel, ledgerPanel, guidePanel, needsPanel, relicsLeft, townContext, householdPanel } from './ui/townpanels.js';
 import { createExpedition } from './adventure/expedition.js';
@@ -69,6 +75,8 @@ async function start() {
   const fog = new THREE.Fog(SKY, 60, 170);
   scene.fog = fog;
   const camera = new THREE.PerspectiveCamera(72, innerWidth / innerHeight, 0.15, 185);
+  // Camera-space 3D hands/trays are rendered in the same scene as the shop.
+  scene.add(camera);
   const sky = new THREE.Group();
   const hemi = new THREE.HemisphereLight(0xffffff, 0x6e856e, 2.1); sky.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe7bf, 2.0); sun.position.set(-70, 110, 55); sky.add(sun);
@@ -114,6 +122,7 @@ async function start() {
   // Town life: farms, shops, trucks and 32 villagers with jobs and meals (src/world/life.js).
   const townLife = createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog });
   const life = townLife.life;
+  const emergencyVisuals = createEmergencyResponseVisuals(life, town);
   // The Town Guide kiosk by the start (src/world/town.js) opens the guide panel.
   const guideSpot = { key: 'guide', pos: town.guidePos, label: '🗺️ Read the Town Guide', guide: true };
   // Named street characters (src/ui/npc-data.js) with their own AI chat window.
@@ -193,6 +202,14 @@ async function start() {
   const expedition = createExpedition({town,makeLabel,openPanel,travel,
     releaseMouse:()=>input.releaseMouse()});
 
+  const companion = mountCompanion({
+    getContext:()=>({mode,place:inside?.place?.name||inside?.house?.name||(nearPerson?.spot?life.place(nearPerson.spot.id)?.name:null)||nearHouse?.house?.name||'Town streets',
+      coordinate:inside?.house?.coordinate||nearHouse?.house?.coordinate||'',floor:inside?.floorIndex||0,
+      pos:player.pos,wallet:life.civic.player.wallet,target:mode==='house'?nearThing:(nearTownSeat?{...nearTownSeat,act:{do:'sit'}}:nearPerson?.spot?{...nearPerson.spot,act:{do:'civic-ledger'}}:nearHouse?{key:nearHouse.house.coordinate,label:nearHouse.house.name,act:{do:'enter'}}:null),
+      interactions:inside?.interactables||[]}),
+    onOpen:()=>{input.releaseMouse();input.reset();npcChat.close();},onClose:()=>input.reset()
+  });
+
   // ── Movement between town and houses ─────────────────────────────────────
   function frontOf(coord) {
     const l = town.lots.get(coord);
@@ -219,7 +236,8 @@ async function start() {
     const f = townLife.placeFront(id);
     player.place(f.x, f.z, f.yaw ?? 0);
     input.pressed.delete('map'); setOverview(false);
-    status(`Outside the ${life.place(id).name}.`);
+    const name = life.place(id).name;
+    status(`Outside ${/^the /i.test(name) ? '' : 'the '}${name}.`);
   }
   function updateFloorBadge() {
     floorBadge.hidden = !inside?.floors;
@@ -231,6 +249,8 @@ async function start() {
     const floors = inside.floors, house = inside.house;
     if (target === inside.floorIndex) { closePanel(); return true; }
     closePanel(); npcChat.close(); nearThing = null; nearNPC = null;
+    inside.workplay?.dispose();
+    inside.bakeryImmersion?.dispose();
     scene.remove(inside.group);
     const next = floors.levels[target];
     inside = { house, ...next, floorIndex:target, floors, people:next.people || [], view:inside.view, ownMeshes:inside.ownMeshes };
@@ -315,6 +335,9 @@ async function start() {
     if(mode!=='town'||!life.places.has(id))return false;
     const yawIn = player.yaw;
     const site=life.place(id), built=buildCivicInterior(site,makeLabel,life);
+    installPhysicalJobs(built,site,makeLabel,life);
+    built.workplay=installWorkplay(built,site,makeLabel,life,{openPanel,closePanel,status,sound:kind=>ambience.work(kind),getVisitors:()=>inside?.visitors?.entries});
+    if(site.id==='bakery')built.bakeryImmersion=installBakeryImmersion(built,life,camera,makeLabel);
     const staff=populateShopStaff(site,life,built,makeLabel);
     const brief={coordinate:site.col+'8',name:site.name,kind:site.kind,
       street:'High Street',summary:'Explore the shop interior and speak to staff.'};
@@ -340,6 +363,8 @@ async function start() {
     closePanel(); npcChat.close();
     const coord = inside.house.coordinate;
     const shop=inside.place||null;
+    inside.bakeryImmersion?.dispose();
+    inside.workplay?.dispose();
     scene.remove(inside.group);
     for (const group of (inside.floors ? inside.floors.levels.map(x => x.group) : [inside.group])) {
       group.traverse((o) => { if (o.isSprite) disposeLabel(o); else if (o.geometry && o.geometry.type !== 'BoxGeometry') o.geometry.dispose(); });
@@ -387,12 +412,21 @@ async function start() {
   // ── HUD ──────────────────────────────────────────────────────────────────
   const list = $('house-list');
   for (const h of houses) { const o = document.createElement('option'); o.value = `${h.coordinate} · ${h.name}`; list.append(o); }
+  // High Street shops, civic buildings and farms are places, not houses: list them too so any building can be found.
+  const placeLabel = (p) => `${p.name} · ${p.side === 'south' ? 'South ' : ''}${p.col}8`;
+  const places = [...life.places.values()].filter((p) => p.col);
+  for (const p of places) { const o = document.createElement('option'); o.value = placeLabel(p); list.append(o); }
   $('search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = $('search').value.trim().toLowerCase(); if (!q) return;
     const code = q.split(' ')[0].toUpperCase();
-    const h = byCoord.get(code) || houses.find((h) => h.name.toLowerCase() === q) || houses.find((h) => h.name.toLowerCase().includes(q) || `${h.coordinate} · ${h.name}`.toLowerCase() === q);
-    if (h) { travel(h.coordinate); $('search').blur(); } else status(`No house matches "${$('search').value}".`);
+    const p = places.find((p) => placeLabel(p).toLowerCase() === q || p.name.toLowerCase() === q || p.id === q);
+    const h = !p && (byCoord.get(code) || houses.find((h) => h.name.toLowerCase() === q || `${h.coordinate} · ${h.name}`.toLowerCase() === q));
+    const near = !p && !h && places.find((p) => p.name.toLowerCase().includes(q));
+    const named = !p && !h && !near && houses.find((h) => h.name.toLowerCase().includes(q));
+    if (p || near) { goPlace((p || near).id); $('search').blur(); }
+    else if (h || named) { travel((h || named).coordinate); $('search').blur(); }
+    else status(`No building matches "${$('search').value}".`);
   });
   $('btn-map').onclick = () => setOverview(!overview);
   // Time of day: jumps the town clock (src/world/life.js) to the next part of the day.
@@ -407,7 +441,7 @@ async function start() {
   $('btn-time').onclick = () => cycleTime();
   addEventListener('keydown', (e) => {
     if (e.key.toLowerCase() !== 't' || e.repeat || e.ctrlKey || e.altKey || e.metaKey) return;
-    if (e.target?.closest?.('input,textarea,select,[contenteditable],#panel,#game,#npc-chat')) return;
+    if (e.target?.closest?.('input,textarea,select,[contenteditable],#panel,#game,#npc-chat,#town-companion')) return;
     cycleTime();
   });
   function syncPerfBtn() {
@@ -595,6 +629,23 @@ async function start() {
         }
         return;
       }
+      if(inside?.workplay&&thing.act?.do==='workplay'){inside.workplay.use(thing);return;}
+      if(inside?.place?.id==='bakery'&&thing.act?.do==='bakery-immersive'){
+        const message=inside.bakeryImmersion?.act(thing.act.action)||'This station is unavailable.';
+        status(message);return;
+      }
+      if(inside?.place&&thing.act?.do==='physical-job'){
+        const result=usePhysicalJob(life,thing.act.task);
+        inside.workStationVisuals?.();
+        status(result.message);
+        return;
+      }
+      if(inside?.place?.id==='bakery'&&thing.act?.do==='bakery-production'){
+        const result=superviseBread(life,thing.act.action);
+        status(result.message);
+        openPanel(bakeryKitchenPanel(life,result.message),thing);
+        return;
+      }
       if(inside?.place&&thing.act?.do==='bakery-kitchen'){
         openPanel(bakeryKitchenPanel(life),thing);
         return;
@@ -620,6 +671,7 @@ async function start() {
       }
       const person = thing.person && inside.people?.find((p) => p.key === thing.key);
       if (person) {
+        if(inside.workplay?.customer(person.v))return;
         person.talking = true;
         if(inside.place){
           const staffHome=person.v?.home?.coordinate && byCoord.get(person.v.home.coordinate);
@@ -706,6 +758,9 @@ async function start() {
   addEventListener('pagehide', () => { save(); townLife.save(); });
   const syncSound = () => { $('btn-sound').textContent = ambience.on ? '🔊 Sound' : '🔇 Sound'; $('btn-sound').setAttribute('aria-pressed', String(ambience.on)); };
   $('btn-sound').onclick = () => { ambience.setOn(!ambience.on); syncSound(); status(ambience.on ? 'Town sound on.' : 'Town sound muted.'); };
+  const audioMixButton=document.createElement('button');audioMixButton.type='button';audioMixButton.textContent='🎚 Audio mix';$('btn-sound').after(audioMixButton);
+  audioMixButton.onclick=()=>openPanel({title:'Town soundscape',body:'<p>Original adaptive music changes with venue and time of day. Music softens during conversations. Sound starts only after you enable it.</p>'+Object.entries(ambience.mix).map(([key,value])=>'<p><label>'+key+' <input type="range" data-audio="'+key+'" min="0" max="100" value="'+Math.round(value*100)+'"></label></p>').join(''),actions:[{label:ambience.on?'Mute all sound':'Enable sound',run:()=>{ambience.setOn(!ambience.on);syncSound();return null;}}],mount:root=>{for(const el of root.querySelectorAll('[data-audio]'))el.oninput=()=>ambience.setMix(el.dataset.audio,Number(el.value)/100);}});
+
   syncSound();
 
   // ── Minimap ──────────────────────────────────────────────────────────────
@@ -773,12 +828,12 @@ async function start() {
       return;
     }
     if (input.consume('map')) setOverview(!overview);
-    if (input.consume('back')) { if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
+    if (input.consume('back')) { if (companion.isOpen()) companion.close(); else if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
     if(expedition.isOpen()){input.keys.clear();input.takeLook();input.pressed.delete('use');}
     if (overview) {
       camera.position.set(player.pos.x, 150, player.pos.z + 95); camera.lookAt(player.pos.x, 0, player.pos.z);
       input.takeLook(); input.consume('jump');
-    } else if (expedition.isOpen() || panelOpen || npcChat.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
+    } else if (companion.isOpen() || expedition.isOpen() || panelOpen || npcChat.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
     else {
       const n=life.needsReport();
       player.speedFactor=Math.max(0.45,1-(n.hunger>80?0.23:0)-(n.fatigue>75?0.32:0));
@@ -802,6 +857,8 @@ async function start() {
       :[];
     const view = mode === 'house' && inside?.view ? inside.view.place(camera, outdoorCam) : null;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo, view });
+    if(mode==='house'&&inside?.bakeryImmersion)inside.bakeryImmersion.update(dt,t);
+    emergencyVisuals.update(t);
     const n=life.needsReport();
     const car=driving.activeVehicle();
     const needsText=`🍽 ${Math.round(n.hunger)}% · 💤 ${Math.round(n.fatigue)}%${car?' · 🚗 '+Math.round(Math.abs(car.speed||0)*3.6)+'km/h ⛽ '+Math.round(car.fuel||0)+'L':''}`;
@@ -814,7 +871,7 @@ async function start() {
       const busy = Math.min(1, townLife.people.filter((p) => !p.v.inside && Math.abs(p.v.x - player.pos.x) < 25 && Math.abs(p.v.z - player.pos.z) < 25).length / 5);
       for (const e of townLife.events.splice(0)) ambience.play(e, mode === 'house' ? 300 : Math.hypot(e.x - player.pos.x, e.z - player.pos.z));
       const wxyz = mode === 'town' ? [life.place('waterworks'), life.place('sewage')].filter(Boolean).reduce((m, q) => Math.max(m, 1 - Math.hypot(player.pos.x - q.x, player.pos.z - (FIELD_Z0 + 6)) / 40), 0) : 0;
-      ambience.update(dt, { day: life.daylight(), busy: mode === 'town' ? busy : 0, truck: mode === 'town' ? truck : Infinity, indoors: mode === 'house', room: inside?.place?.id || (inside ? 'house' : ''), weather: life.civic.weather, water: Math.max(0, wxyz), surface: mode === 'house' ? roomFloor(inside?.place?.id || 'house') : surfaceAt(player.pos.x, player.pos.z), stepPhase: player.bob, moving: movedDist > 0.015, running: movedDist > dt * 5.2, crouching: player.eye < 1.3, airborne: player.y > 0, hour: life.minute / 60, dayNumber: life.day });
+      ambience.update(dt, { day: life.daylight(), busy: mode === 'town' ? busy : Math.min(1,(inside?.people?.filter(p=>p.key?.startsWith('visitor:')).length||0)/8), truck: mode === 'town' ? truck : Infinity, indoors: mode === 'house', room: inside?.place?.id || (inside ? 'house' : ''), weather: life.civic.weather, water: Math.max(0, wxyz), surface: mode === 'house' ? roomFloor(inside?.place?.id || 'house') : surfaceAt(player.pos.x, player.pos.z), stepPhase: player.bob, moving: movedDist > 0.015, running: movedDist > dt * 5.2, crouching: player.eye < 1.3, airborne: player.y > 0, hour: life.minute / 60, dayNumber: life.day });
     }
 
     if (mode === 'town') {
@@ -911,7 +968,7 @@ async function start() {
       // House name boards are created only near the player to keep GPU memory low on phones.
       for (const [c, l] of town.lots) {
         const d = Math.hypot(l.doorPos.x - player.pos.x, l.doorPos.z - player.pos.z), has = houseLabels.get(c);
-        if (d < labelCull && !has) { const s = makeLabel(`${c} · ${l.house.name}`, 'house'); s.position.set(l.doorPos.x, 3.7, l.doorPos.z + 3.4); /* clear of colonnades and pagoda eaves */ town.group.add(s); houseLabels.set(c, s); }
+        if (d < labelCull && !has) { const s = makeLabel(`${c} · ${l.house.name}`, 'house'); /* Anchor to each building's actual front wall; the old fixed offset buried deeper shop signs inside walls. */ s.position.set(l.lot.x, Math.max(3.7, Math.min(5.5, l.fp.h - 0.8)), l.doorPos.z + 1.2); town.group.add(s); houseLabels.set(c, s); }
         else if (d > labelCull + 15 && has) { town.group.remove(has); disposeLabel(has); houseLabels.delete(c); }
       }
       const nearRelic = expedition.nearby(player.pos), relicD = away(nearRelic), npcD = away(nearNPC), personD = away(nearPerson);
@@ -946,6 +1003,7 @@ async function start() {
         if (input.consume('use')) use();
         animate(inside.dynamics, t, active);
         inside.visitors?.update(dt,t,player);
+        inside.workplay?.update(dt,player);
         // Shop patrons are synchronised with the authoritative town economy
         // above; they have their own movement and seated animation.
         for (const p of inside.people || []) if(!p.key?.startsWith('visitor:'))p.update(dt,t,player,p.plan);
@@ -986,6 +1044,7 @@ async function start() {
     talkTo: (id) => npcChat.show(id),
     travel,
     state: () => ({
+      workplay:life.civic.workplay||null,
       mode, driving: driving.activeVehicle()?.registration||null, nearbyVehicle:nearCar?.registration||null, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
       seats: mode==='house' ? (inside?.seats||[]).map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos,room:x.room})) : townLife.seats.map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos})),
       coordinate: inside?.house.coordinate || null, floor: inside?.floorIndex || 0, windows: inside?.windows?.length || 0, floors: inside?.floors?.levels.length || 1, pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, eye: player.eye, y: player.y, fps,

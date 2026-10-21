@@ -1,3 +1,4 @@
+import { tickWorkplay } from './workplay.js';
 // Paid shifts and the visitor's receipts, on this town's money model. The visitor picks a shift at a
 // workplace, stays inside it while a staff member is on duty, does its three duties and collects the
 // wage. Pay comes from the employer's till first, then the council, and PAYG tax goes to the
@@ -6,6 +7,7 @@ import { recordEarning } from './credit.js';
 import { withholdVisitor } from './finance.js';
 
 export const JOB_BOARD = Object.freeze([
+  {id:'cafe-all-rounder',site:'cafe',name:'Café all-rounder',minutes:40,pay:28,tasks:['take-orders','prepare-orders','table-service'],blurb:'Take customer orders, make drinks and food, and deliver to numbered tables'},
   { id: 'bakery-assistant', site: 'bakery', name: 'Bakery assistant', minutes: 35, pay: 24, tasks: ['wash-hands', 'prep-bench', 'cooling'], blurb: 'Help shape, tray and pack baked goods' },
   { id: 'farm-hand', site: 'garden', name: 'Market Garden hand', minutes: 45, pay: 30, tasks: ['water-plants', 'weed-beds', 'pack-produce'], blurb: 'Water, weed and collect produce' },
   { id: 'depot-sorter', site: 'depot', name: 'Rail Depot parcel sorter', minutes: 40, pay: 28, tasks: ['sort-freight', 'verify-manifest', 'stack-parcels'], blurb: 'Sort incoming freight and secure parcels' },
@@ -43,7 +45,7 @@ const doneToday = (life) => (jobs(life).done[life.day] || []);
 export function startJob(life, id) {
   const j = jobs(life), def = byId(id), site = def && life.place(def.site);
   if (!def) return { ok: false, message: 'Unknown job.' };
-  if (current(life)) return { ok: false, message: 'Finish or cancel your current shift first.' };
+  if (current(life)) { const a=current(life); const workplace=life.place(a.site); return { ok:false, message:'You are already working at '+(workplace?.name||a.site)+'. Finish that shift there, or cancel it from any workplace job panel first.' }; }
   if (doneToday(life).includes(id)) return { ok: false, message: 'You already did that shift today.' };
   if (doneToday(life).length >= MAX_SHIFTS_PER_DAY) return { ok: false, message: `You can work ${MAX_SHIFTS_PER_DAY} shifts a day.` };
   if (!life.open(site)) return { ok: false, message: `${site.name} is closed right now.` };
@@ -54,6 +56,7 @@ export function startJob(life, id) {
 // Called every simulated minute: the shift only advances while the visitor is inside the workplace
 // with a staff member on duty.
 export function tickJobs(life, minutes) {
+  tickWorkplay(life);
   const a = jobs(life).active;
   if (!a) return;
   if (a.day !== life.day) { jobs(life).active = null; return; }          // an unfinished shift lapses at midnight
@@ -88,8 +91,8 @@ export function finishJob(life) {
   let paid = 0;
   if (place && !['hall', 'school', 'clinic', 'post', 'depot', 'square'].includes(place.id) && place.till > 0) { paid = Math.min(def.pay, Math.floor(place.till)); place.till -= paid; }
   const rest = Math.min(def.pay - paid, Math.floor(c.treasury)); c.treasury -= rest; paid += rest;
+  if (paid <= 0) return { ok: false, message: 'The employer cannot pay wages today. Your completed shift remains active until payment is available.' };
   j.active = null;
-  if (paid <= 0) return { ok: false, message: 'The employer cannot pay wages today. The shift is not lost; try again tomorrow.' };
   c.player.wallet += paid;
   const tax = withholdVisitor(life, paid);
   j.done[life.day] = [...doneToday(life), def.id];
