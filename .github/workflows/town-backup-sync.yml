@@ -41,13 +41,14 @@ jobs:
             echo "GitHub Pages already mirrors verified source $sha"
             exit 0
           fi
-          for workflow in town-integration.yml town-webgl-playtest.yml; do
-            count=$(gh api "repos/joshualparris/JoshMemory/actions/workflows/$workflow/runs?head_sha=$sha&per_page=25" --jq "[.workflow_runs[] | select(.head_sha == \"$sha\" and .conclusion == \"success\")] | length")
-            if [[ "$count" -lt 1 ]]; then
-              echo "::error::Missing successful $workflow for canonical source $sha; refusing an unverified release"
-              exit 1
-            fi
-          done
+          # A merge commit can retain the exact reviewed tree but lacks its own
+          # WebGL run. Require its integration gate, then execute the complete
+          # browser playtest on this exact checked-out commit below.
+          count=$(gh api "repos/joshualparris/JoshMemory/actions/workflows/town-integration.yml/runs?head_sha=$sha&per_page=25" --jq "[.workflow_runs[] | select(.head_sha == \"$sha\" and .conclusion == \"success\")] | length")
+          if [[ "$count" -lt 1 ]]; then
+            echo "::error::Missing successful town integration for $sha; refusing an unverified release"
+            exit 1
+          fi
           echo "changed=true" >> "$GITHUB_OUTPUT"
           echo "Publishing verified JoshMemory source $sha"
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
@@ -70,6 +71,34 @@ jobs:
             node tests/simulation-soak.mjs --days 28 --seed "$seed" --quiet > "/tmp/town-seed-$seed.log" || { cat "/tmp/town-seed-$seed.log"; exit 1; }
             grep '38 passed, 0 findings' "/tmp/town-seed-$seed.log"
           done
+      - name: Install headless Chromium for independent GitHub Pages release verification
+        if: steps.verified.outputs.changed == 'true'
+        working-directory: source/repository-town
+        run: npx playwright install --with-deps chromium
+      - name: Playtest the exact public build in desktop and Android-size Chromium
+        if: steps.verified.outputs.changed == 'true'
+        working-directory: source/repository-town
+        env:
+          TOWN_PLAYTEST_URL: http://127.0.0.1:8091/
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          node tools/serve.mjs dist/public 8091 > /tmp/pages-town-server.log 2>&1 &
+          server=$!
+          trap 'kill $server 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:8091/ >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsSI http://127.0.0.1:8091/ >/dev/null
+          node tests/webgl-playtest.mjs
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.verified.outputs.changed == 'true'
+        with:
+          name: verified-pages-webgl-${{ github.run_id }}
+          path: source/repository-town/test-results/webgl-playtest/
+          retention-days: 14
+          if-no-files-found: ignore
       - name: Verify release fingerprint and prepare GitHub Pages backup
         if: steps.verified.outputs.changed == 'true'
         env:
@@ -87,10 +116,16 @@ jobs:
           RELEASE_SHA: ${{ steps.verified.outputs.sha }}
         run: |
           set -euo pipefail
-          latest=$(gh api repos/joshualparris/JoshMemory/commits/main --jq .sha)
-          if [[ "$latest" != "$RELEASE_SHA" ]]; then
-            echo "::error::Canonical main moved to $latest while building; refusing a stale mirror"
-            exit 1
+          # Release may be a verified ancestor if another merge lands during
+          # the long build. Never deploy a commit outside canonical main.
+          current=$(gh api repos/joshualparris/JoshMemory/commits/main --jq .sha)
+          if [[ "$current" != "$RELEASE_SHA" ]]; then
+            relation=$(gh api "repos/joshualparris/JoshMemory/compare/$RELEASE_SHA...main" --jq '.status')
+            if [[ "$relation" != "ahead" && "$relation" != "identical" ]]; then
+              echo "::error::Source $RELEASE_SHA is no longer in canonical main"
+              exit 1
+            fi
+            echo "::notice::Main advanced to $current; publishing last fully verified ancestor $RELEASE_SHA"
           fi
           git -C site config user.name 'github-actions[bot]'
           git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
