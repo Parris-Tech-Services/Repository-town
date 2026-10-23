@@ -1,6 +1,7 @@
 import {occupationPanel} from './ui/occupation-panels.js';
 import {installWorkplay} from './world/workplay-view.js';
 import { mountCompanion } from './ui/companion.js';
+import { isHudBlocked } from './ui/hud-visibility.js';
 import * as THREE from 'three';
 import { CollisionWorld } from './engine/collision.js';
 import { Input } from './engine/input.js';
@@ -19,6 +20,7 @@ import { emergencyPanel,justicePanel } from './ui/emergency-panels.js';
 import { civicExitPose } from './world/shop-exit.js';
 import { populateShopStaff } from './world/shop-staff.js';
 import { facilityAccess, restrictedServiceAction } from './world/facility-access.js';
+import { atCivicEntrance, closedCivicDoorPose } from './world/civic-entrance.js';
 import { createShopVisitors } from './world/shop-visitors.js';
 import { loadFurniture } from './world/furniture.js';
 import { createFloorStack, FLOOR_HEIGHT } from './world/multifloor.js';
@@ -31,6 +33,7 @@ import { setArchiveLoader } from './ui/archive.js';
 import { npcBehaviour } from './ui/npc.js';
 import { sceneFromRoom } from './ui/scene-awareness.js';
 import { mountNPCChat } from './ui/npc-chat.js';
+import { mountTownYarns } from './ui/yarns.js';
 import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
 import { separatePedestrians, steerPedestrians } from './world/pedestrian-spacing.js';
 import { createTownLife } from './world/townlife.js';
@@ -44,6 +47,8 @@ import { superviseBread } from './world/bakery-production.js';
 import { installBakeryImmersion } from './world/bakery-immersive.js';
 import { walletPanel, jobBoardPanel } from './ui/economy-panels.js';
 import { placePanel, ledgerPanel, guidePanel, needsPanel, relicsLeft, townContext, householdPanel } from './ui/townpanels.js';
+import { openingHoursPanel } from './ui/shop-hours-panel.js';
+import { createSleepSession, sleepChoices } from './world/needs.js';
 import { createExpedition } from './adventure/expedition.js';
 
 const $ = (id) => document.getElementById(id);
@@ -193,6 +198,7 @@ async function start() {
   let interactionRequest = 0;
 
   let mode = 'town', inside = null, world = townWorld, overview = false;
+  const yarns=mountTownYarns({life,player,onOpen:()=>{input.releaseMouse();input.reset();npcChat.close();$('npc-roster').hidden=true;if(panelOpen)closePanel();}});
   const active = new Set();
   const visited = new Set();
   function syncDiscoveryCount() {
@@ -205,13 +211,35 @@ async function start() {
   const expedition = createExpedition({town,makeLabel,openPanel,travel,
     releaseMouse:()=>input.releaseMouse()});
 
+  // All focused overlays take priority over the floating AI launcher and
+  // the bottom interaction hint. This also handles the small building card.
+  function blockingHudOverlays(){
+    return {
+      panel:!!panelOpen||!$('panel').hidden,
+      buildingCard:!$('card').hidden,
+      npcDialogue:npcChat.isOpen(),
+      expedition:expedition.isOpen(),
+      roster:!$('npc-roster').hidden,
+      yarns:yarns.isOpen(),
+      help:!$('help').hidden,
+      game:!$('game').hidden,
+      map:overview,
+    };
+  }
   const companion = mountCompanion({
     getContext:()=>({mode,place:inside?.place?.name||inside?.house?.name||(nearPerson?.spot?life.place(nearPerson.spot.id)?.name:null)||nearHouse?.house?.name||'Town streets',
       coordinate:inside?.house?.coordinate||nearHouse?.house?.coordinate||'',floor:inside?.floorIndex||0,
       pos:player.pos,wallet:life.civic.player.wallet,target:mode==='house'?nearThing:(nearTownSeat?{...nearTownSeat,act:{do:'sit'}}:nearPerson?.spot?{...nearPerson.spot,act:{do:'civic-ledger'}}:nearHouse?{key:nearHouse.house.coordinate,label:nearHouse.house.name,act:{do:'enter'}}:null),
       interactions:inside?.interactables||[]}),
-    onOpen:()=>{input.releaseMouse();input.reset();npcChat.close();},onClose:()=>input.reset()
+    onOpen:()=>{input.releaseMouse();input.reset();npcChat.close();},onClose:()=>input.reset(),
+    isBlocked:()=>isHudBlocked(blockingHudOverlays())
   });
+
+  function syncOverlayHud(){
+    const blocked=isHudBlocked(blockingHudOverlays());
+    companion.setBlocked(blocked);
+    if(blocked)$('prompt').hidden=true;
+  }
 
   // ── Movement between town and houses ─────────────────────────────────────
   function frontOf(coord) {
@@ -463,6 +491,7 @@ async function start() {
   syncPerfBtn();
   $('btn-perf').onclick = () => { lowPerf = !lowPerf; syncPerfBtn(); status(lowPerf ? 'Smooth mode on: drawing fewer distant objects.' : 'Full draw distance restored.'); };
   $('btn-guide').onclick = () => openPanel(guideContent(), guideSpot);
+  $('btn-hours').onclick = () => openPanel(openingHoursPanel(life, goPlace), guideSpot);
   $('btn-000').onclick = () => openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),guideSpot);
   $('btn-discoveries').onclick = () => openPanel(discoveryContent(), guideSpot);
   $('btn-wallet').onclick = () => openPanel(walletPanel(life, { go: (id) => { goPlace(id); return null; } }), guideSpot);
@@ -537,6 +566,69 @@ async function start() {
     interactionRequest++; input.reset();
     if (inside?.people) for (const p of inside.people) p.talking = false;
     panelOpen = null; $('panel').classList.remove('chat-typing'); $('panel').hidden = true;
+  }
+
+  // Minecraft-style sleep: lie back into the actual bed, fade to black,
+  // simulate every intervening town tick, then fade back to the live world.
+  let sleeping=false;
+  const sleepScreen=$('sleep-screen');
+  const sleepText=$('sleep-message'),sleepTime=$('sleep-time');
+  const motionReduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const after=(ms)=>new Promise(resolve=>setTimeout(resolve,ms));
+  async function beginSleep(site,room,duration,bed) {
+    if(sleeping)return;
+    const session=createSleepSession(life,site,room,duration);
+    if(!session.ok){status(session.error);return;}
+    sleeping=true;
+    closePanel();companion.close();npcChat.close();input.releaseMouse();input.reset();
+    const oldPos=camera.position.clone(),oldRoll=camera.rotation.z;
+    sleepText.textContent='Settling into bed…';
+    sleepTime.textContent='Day '+session.startDay+' · '+session.startTime;
+    sleepScreen.hidden=false;
+    sleepScreen.classList.remove('sleep-dark');
+    const target=new THREE.Vector3(bed?.pos?.x??oldPos.x,player.baseHeight+0.86,bed?.pos?.z??oldPos.z);
+    try {
+      // One continuous motion: first-person view lowers onto the mattress,
+      // rolls towards the pillow and disappears beneath the dark overlay.
+      await new Promise(resolve=>{
+        const begin=performance.now(),length=motionReduced?120:850;
+        function settle(now){
+          const p=Math.min(1,(now-begin)/length),ease=p*p*(3-2*p);
+          camera.position.lerpVectors(oldPos,target,ease);
+          camera.rotation.z=oldRoll+ease*1.05;
+          renderFrame();
+          if(p<1)requestAnimationFrame(settle);else resolve();
+        }
+        requestAnimationFrame(()=>{
+          sleepScreen.classList.add('sleep-dark');
+          requestAnimationFrame(settle);
+        });
+      });
+      sleepText.textContent='💤 Sleeping…';
+      while(session.remaining>0){
+        session.advance(Math.min(12,session.remaining));
+        sleepTime.textContent='Day '+life.day+' · '+life.time();
+        // Yield between batches so the black screen stays responsive on Android.
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+      }
+      const message=session.finish();
+      townLife.save();save();
+      sleepText.textContent=life.minute>=360&&life.minute<660?'🌅 Good morning':'☀️ You wake up';
+      sleepTime.textContent='Day '+life.day+' · '+life.time();
+      status(message);
+      await after(motionReduced?80:450);
+    }catch(error){
+      console.error('Sleep interrupted:',error);
+      status('Sleep was interrupted. Your current town progress has been kept.');
+      townLife.save();save();
+    }finally{
+      camera.position.copy(oldPos);camera.rotation.z=oldRoll;
+      sleepScreen.classList.remove('sleep-dark');
+      await after(motionReduced?130:850);
+      sleepScreen.hidden=true;
+      sleeping=false;
+      input.reset();
+    }
   }
 
   const ctx = {
@@ -630,30 +722,24 @@ async function start() {
         return;
       }
       if(thing.act?.do==='sleep') {
-        if(inside?.place?.id==='hotel') {
-          const room=Number(thing.act.room)||null;
-          const n=life.needsReport();
-          openPanel({title:'Railway Hotel · '+thing.label,
-            body:'<p>'+esc(n.booking?'You have a booking for room '+n.booking.room+'.':'You need a room key from hotel reception first.')+'</p>'+
-              '<p>Sleep in your allocated room. Time, deliveries, wages and village routines continue overnight.</p>',
-            actions:[{label:'Sleep in this bed',run:()=>{
-              const msg=life.sleepHotel(room),p=needsPanel(life);
-              return {...p,body:'<p><b>'+esc(msg)+'</b></p>'+p.body};
-            }},{label:'Hotel reception',run:()=>placePanel(life,'hotel')}]},thing);
-        } else {
-          const home=inside?.house?.coordinate;
-          const parcel=home&&life.civic.property?.parcels?.['H:'+home];
-          const accessible=parcel&&((life.civic.property.playerLease==='H:'+home&&parcel.tenant==='visitor')||(parcel.owner==='visitor'&&(!parcel.tenant||parcel.tenant==='visitor')));
-          if(accessible){
-            openPanel({title:'Your home · '+thing.label,
-              body:'<p>You have the right to occupy this home. Sleep here overnight without paying hotel charges; normal town bills and activity continue.</p>',
-              actions:[{label:'Sleep in your own bed',run:()=>{const msg=life.sleepHome(home),p=needsPanel(life);return {...p,body:'<p><b>'+esc(msg)+'</b></p>'+p.body};}}]},thing);
-          }else{
-            openPanel({title:'Someone else’s bed',
-              body:'<p>This is a private home. Its residents need their beds to sleep. Rent an available home, buy one with vacant possession, or book your own hotel room at the Railway Hotel, I8.</p>',
-              actions:[]},thing);
-          }
+        const hotel=inside?.place?.id==='hotel';
+        const room=hotel?Number(thing.act.room)||null:inside?.house?.coordinate;
+        const site=hotel?'hotel':'home';
+        const check=createSleepSession(life,site,room,30);
+        if(!check.ok){
+          openPanel({title:hotel?'Railway Hotel · '+thing.label:'Private bedroom',
+            body:'<p>'+esc(check.error)+'</p><p>'+ (hotel?
+              'Only the guest bed matching your paid room key is available. Book at reception.':
+              'Rent or buy a vacant home before using its bed.')+'</p>',
+            actions:hotel?[{label:'Hotel reception',run:()=>placePanel(life,'hotel')}]:[]},thing);
+          return;
         }
+        const choices=sleepChoices(life);
+        openPanel({title:(hotel?'Railway Hotel':'Your home')+' · '+thing.label,
+          body:'<p>Climb into bed and choose how long to sleep. The screen darkens, you wake in this room, and the town carries on around you.</p>'+
+            '<p>Current time: <b>Day '+life.day+' · '+life.time()+'</b> · Fatigue '+Math.round(life.civic.player.fatigue)+'%.</p>'+
+            '<p>Longer sleep restores more energy. Hunger still rises; work shifts, deliveries, neighbours and bills continue.</p>',
+          actions:choices.map(choice=>({label:choice.label,run:()=>{beginSleep(site,room,choice.duration,thing);return null;}}))},thing);
         return;
       }
       if(inside?.workplay&&thing.act?.do==='workplay'){inside.workplay.use(thing);return;}
@@ -850,6 +936,8 @@ async function start() {
       frames = 0; fpsTimer = 0;
     }
     // While a game is open the town neither renders nor reacts, so the game gets the whole device.
+    syncOverlayHud();
+    if (sleeping) { input.reset(); requestAnimationFrame(frame); return; }
     if (playing) {
       if (input.consume('back')) stopGame();
       input.takeLook(); for (const k of ['use', 'jump', 'map']) input.consume(k);
@@ -857,12 +945,12 @@ async function start() {
       return;
     }
     if (input.consume('map')) setOverview(!overview);
-    if (input.consume('back')) { if (companion.isOpen()) companion.close(); else if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
+    if (input.consume('back')) { if (companion.isOpen()) companion.close(); else if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (yarns.isOpen()) yarns.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
     if(expedition.isOpen()){input.keys.clear();input.takeLook();input.pressed.delete('use');}
     if (overview) {
       camera.position.set(player.pos.x, 150, player.pos.z + 95); camera.lookAt(player.pos.x, 0, player.pos.z);
       input.takeLook(); input.consume('jump');
-    } else if (companion.isOpen() || expedition.isOpen() || panelOpen || npcChat.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
+    } else if (companion.isOpen() || expedition.isOpen() || panelOpen || npcChat.isOpen() || yarns.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
     else {
       const n=life.needsReport();
       player.speedFactor=Math.max(0.45,1-(n.hunger>80?0.23:0)-(n.fatigue>75?0.32:0));
@@ -887,6 +975,7 @@ async function start() {
       :[];
     const view = mode === 'house' && inside?.view ? inside.view.place(camera, outdoorCam) : null;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo, view });
+    yarns.update(dt,mode);
     inside?.soyVisuals?.();
     if(mode==='house'&&inside?.bakeryImmersion)inside.bakeryImmersion.update(dt,t);
     emergencyVisuals.update(t);
@@ -989,15 +1078,12 @@ async function start() {
       // just in front of their door (not inside an inaccessible wall).
       if(mode==='town' && !overview && !driving.driving){
         for(const place of life.places.values()){
-          if(Math.abs(player.pos.x-place.x)<.93 &&
-             player.pos.z>=place.door.z-.12 &&
-             player.pos.z<=place.door.z+.92){
+          if(atCivicEntrance(place,player.pos)){
             if(!enterShop(place.id, true)){
-              // The façade itself is collision-solid, but its transition zone
-              // is not. Bounce outside the trigger instead of allowing a
-              // locked door to teleport the player indoors on the next frame.
-              const streetSide=place.side==='south' ? place.door.z-1.15 : place.door.z+1.35;
-              player.place(player.pos.x,streetSide,player.yaw);
+              // Keep closed/unattended buildings secure, but give an obvious
+              // physical rejection outside the expanded entrance trigger.
+              const back=closedCivicDoorPose(place,player.pos);
+              player.place(back.x,back.z,player.yaw);
             }
             break;
           }
@@ -1035,7 +1121,14 @@ async function start() {
       else if(nearTownSeat) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Sit on ${nearTownSeat.label}`;
       else if (nearRelic && relicD <= npcD && relicD <= personD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ✨ ${nearRelic.id === 'guild' ? 'Guild Chest' : nearRelic.name}`;
       else if (nearNPC && npcD <= personD) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — 💬 Talk to ${nearNPC.npc.name}`;
-      else if (nearPerson) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearPerson.v ? `Talk to ${nearPerson.v.name} (${nearPerson.v.job}) · ${nearPerson.v.activity.replace(/^(walking|cycling) — /, '')}` : nearPerson.label}`;
+      else if (nearPerson) {
+        const site=nearPerson.spot?.id && life.places.get(nearPerson.spot.id);
+        const access=site && facilityAccess(life,site);
+        const label=site && !access.allowed
+          ? (access.reason==='unstaffed'?site.name+' · Waiting for staff':site.name+' · Closed to visitors')
+          : nearPerson.v?`Talk to ${nearPerson.v.name} (${nearPerson.v.job}) · ${nearPerson.v.activity.replace(/^(walking|cycling) — /, '')}`:nearPerson.label;
+        $('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — ${label}`;
+      }
       else if (nearHouse) $('prompt').textContent = `${nearHouse.house.coordinate} · ${nearHouse.house.name} — walk through the door to enter`;
       if (input.consume('use')) use();
     } else {
@@ -1084,6 +1177,9 @@ async function start() {
     expedition.update(t,player,mode);
     mapTimer += dt; if (mapTimer > 0.2) { drawMap(); mapTimer = 0; }
     saveTimer += dt; if (saveTimer > 3) { save(); saveTimer = 0; }
+    // Apply after selecting the new nearby prompt: never let it reappear over
+    // a shop menu, building card, NPC conversation or other focused interface.
+    syncOverlayHud();
     renderFrame();
     requestAnimationFrame(frame);
   }
@@ -1122,7 +1218,7 @@ async function start() {
     travel,
     state: () => ({
       workplay:life.civic.workplay||null,
-      mode, driving: driving.activeVehicle()?.registration||null, nearbyVehicle:nearCar?.registration||null, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
+      mode, sleeping, driving: driving.activeVehicle()?.registration||null, nearbyVehicle:nearCar?.registration||null, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
       seats: mode==='house' ? (inside?.seats||[]).map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos,room:x.room})) : townLife.seats.map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos})),
       coordinate: inside?.house.coordinate || null, floor: inside?.floorIndex || 0, windows: inside?.windows?.length || 0, floors: inside?.floors?.levels.length || 1, pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, eye: player.eye, y: player.y, fps,
       rooms: inside?.rooms.length || 0, props: inside?.placedProps.length || 0,

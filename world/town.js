@@ -121,8 +121,6 @@ export function buildTown(scene, houses, streets) {
     group.add(hinge);
     doors.push(hinge);
   }
-  // Position-based entry must survive low-FPS walking without tunnelling
-  // across a tiny trigger in front of the visually open doorway.
   const doorZones = [...lots.values()].map(({ house, doorPos, fp }) => ({
     coordinate: house.coordinate, ...houseEntranceZone(doorPos, fp),
   }));

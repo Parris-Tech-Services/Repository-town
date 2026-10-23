@@ -8,13 +8,14 @@ import { esc } from './interactions.js';
 import { economyPanel, jobPanel } from './economy-panels.js';
 import { JOB_BOARD } from '../world/jobs.js';
 import { workingAt, shopService } from '../world/shop-attendance.js';
+import { facilityAccess, visitorHours } from '../world/facility-access.js';
 import { COUNTERS, lineAt, pendingOrders } from '../world/counter-queue.js';
 import { householdReport, feederFor, TARIFF, fireDanger, season } from '../world/household.js';
 import { propertyOfficePanel, motorMarketPanel, motorWorkshopPanel } from './property-panels.js';
 import { tradeEducationPanel } from './trade-education-panels.js';
 
 const list = (o) => Object.entries(o || {}).filter(([, n]) => n > 0).map(([g, n]) => amount(g, n)).join(', ') || 'nothing';
-const hours = (p) => (p.opens === 0 && p.closes >= 1440 ? 'open all hours' : `${timeText(p.opens)}–${timeText(p.closes)}`);
+const hours = (p) => { const [from, to] = visitorHours(p); return p.id === 'square' ? 'open all hours' : p.id === 'farmhouse' ? 'visits by appointment' : `${timeText(from)}–${timeText(to)}`; };
 
 // How each place works, so the town reads as a real supply chain.
 const ABOUT = {
@@ -85,6 +86,18 @@ function civicPanel(life, id, again) {
   if (id === 'sewage') rows.push(`<p><b>Waiting for treatment:</b> ${u.wastewater} kL · pollution ${Math.round(c.indicators.pollution)}%</p>`);
   if (id === 'recycling') rows.push(`<p><b>Sorting:</b> ${u.recycling} bags · recycled today ${life.stats.recycled}</p><p class="dim">Kerbside recycling waiting: ${Math.floor(c.homes.recyclables)} bags.</p>`);
   if (id === 'landfill') rows.push(`<p><b>Rubbish buried:</b> ${u.landfill} tonnes · environment ${Math.round(c.indicators.environment)}%</p>`);
+  if (id === 'securityhq' || id === 'securityoffice') {
+    const guards=life.villagers.filter(v=>v.job==='security guard');
+    rows.push('<h3>Active private-security patrols</h3>'+
+      guards.map(v=>'<p><b>'+esc(v.name)+'</b> · '+esc(timeText(v.start))+'–'+esc(timeText(v.end))+
+        ' · '+esc(v.activity)+
+        (v.step?.at&&life.place(v.step.at)?' · Next location: '+esc(life.place(v.step.at).name):'')+
+        '</p>').join('')+
+      '<p class="dim">These are paid private guards walking real footpath routes. They have no police powers, do not enter homes or shops without permission, and report incidents to police.</p>');
+  }
+  if (id === 'locksmith') rows.push(
+    '<h3>Locksmith services</h3><p>Key cutting, lock repairs, replacement cylinders and rekeying. Proof of ownership, tenancy or written authorisation is needed before any key is issued or lock changed.</p>'+
+    '<p class="dim">Locksmith service enquiries are informational; keys are not yet represented as tradable game inventory.</p>');
   if (id === 'foundry') rows.push(`<p><b>Ore:</b> ${p.stock.ore || 0} · <b>metal:</b> ${p.stock.metal || 0} · <b>scrap:</b> ${p.stock.scrap || 0} · <b>parts ready:</b> ${p.out.parts || 0}</p>`);
   if (id === 'fire') {
     const fd = fireDanger(life.day, c.weather), advice = ['Fires should be controlled. Report any you see.', 'Plan and prepare: know your bush fire plan.', 'Be ready to act: check your plan and stay informed.', 'Take action now to protect life and property.', 'For your survival, leave bush fire risk areas.'][fd.level];
@@ -103,7 +116,7 @@ function civicPanel(life, id, again) {
     rows.push(`<p><b>Household bills:</b> rent ${money(ov.rentArrears)} and power ${money(ov.powerArrears)} overdue · rent $8 and power $2 are charged each morning from your wallet, then savings.</p>`);
     if (cr.journal.length) rows.push(`<p class="dim"><b>Recent entries:</b></p><ul class="dim">${cr.journal.map((e) => `<li>Day ${e.day} · ${esc(e.text)}</li>`).join('')}</ul>`);
   }
-  rows.push(`<p><b>Hours:</b> ${esc(hours(p))} · <b>Staff:</b> ${staff.map((v) => esc(`${v.name} (${v.job})`)).join(', ') || 'automated'}</p>`);
+  rows.push(`<p><b>Visiting hours:</b> ${esc(hours(p))} · <b>Entry:</b> ${esc(facilityAccess(life,p).reason === 'unstaffed' ? 'waiting for staff' : facilityAccess(life,p).allowed ? 'open' : 'closed')} · <b>Staff:</b> ${staff.map((v) => esc(`${v.name} (${v.job})`)).join(', ') || 'automated'}</p>`);
   const act = (label, fn) => ({ label, run: () => { const msg = fn(); return { ...again(), body: `<p><b>${esc(msg)}</b></p>` + again().body }; } });
   const actions = [];
   if (id === 'hotel') actions.push(act('Book a room ($24)', () => life.bookHotel()));
@@ -206,14 +219,15 @@ function placePanelBase(life, id) {
   const p = life.place(id);
   if (p.side === 'south') return civicPanel(life, id, () => placePanel(life, id));
   if (id === 'hall') return hallPanel(life);
-  const open = life.open(p);
+  const access = facilityAccess(life, p);
+  const open = access.allowed;
   const staff = life.villagers.filter((v) => v.work === id);
-  const here = life.villagers.filter((v) => workingAt(v,p));
+  const here = life.villagers.filter((v) => workingAt(v,id));
   const service = shopService(life,p), serving = service.available;
   const visitors = life.villagers.filter((v) => v.step?.at === id && v.step.kind !== 'work' && !v.path.length);
   const rows = [];
   rows.push(`<p>${esc(ABOUT[id] || '')}</p>`);
-  rows.push(`<p><b>Hours:</b> ${esc(hours(p))} · ${open ? '<span class="ok">open now</span>' : '<span class="dim">closed now</span>'} · it's ${esc(life.time())}</p>`);
+  rows.push(`<p><b>Visiting hours:</b> ${esc(hours(p))} · ${open ? '<span class="ok">open for entry</span>' : `<span class="dim">${esc(access.reason === 'unstaffed' ? 'awaiting staff' : 'closed to visitors')}</span>`} · it's ${esc(life.time())}</p>`);
   rows.push(`<p><b>Counter:</b> ${esc(service.message)}</p>`);
   if (p.kind === 'farm') {
     rows.push(`<p><b>Crop:</b> <span class="bar"><span style="width:${Math.round(p.growth * 100)}%"></span></span> ${Math.round(p.growth * 100)}% grown</p>`);
@@ -298,6 +312,9 @@ export function ledgerPanel(life) {
   const n = (o) => Object.entries(o).map(([g, k]) => esc(amount(g, k))).join(', ') || 'none yet';
   const y = L.yesterday;
   const council=life.governmentReport();
+  const yarns=(life.social?.events||[]).filter(e=>Array.isArray(e.lines)&&e.lines.length).slice(0,8);
+  const yarnHTML=yarns.map(e=>'<details><summary>'+esc(e.people.join(' & ')+' · '+(e.location||e.kind)+' · Day '+e.day+' '+String(Math.floor(e.minute/60)).padStart(2,'0')+':'+String(e.minute%60).padStart(2,'0'))+'</summary>'+
+    e.lines.map(line=>'<p><b>'+esc(line.speaker)+':</b> “'+esc(line.text)+'”</p>').join('')+'</details>').join('');
   return {
     title: `Town Ledger · Day ${L.day}, ${L.time}`, wide: true,
     body: `<p><b>Population:</b> ${L.population} villagers · ${L.atWork} at work · ${L.asleep} asleep · ${life.homes.length} households.</p>
@@ -311,6 +328,7 @@ export function ledgerPanel(life) {
       <h3>Government and public works</h3><p>Mayor ${esc(council.mayor)} · GM ${esc(council.manager)} · ${council.councillors.length} elected councillors · ${council.orders.filter(o=>o.status!=='done').length} work orders open · ${council.motions.filter(m=>m.status==='tabled').length} motions pending. Visit Town Hall for decisions and reports.</p>
       <h3>Council and utilities</h3><p>Mayor ${esc(L.civic.mayor)} · treasury ${money(L.civic.treasury)} · weather ${esc(L.civic.weather)} · power ${L.civic.supply.power}/${L.civic.supply.powerDemand} ${L.civic.supply.ok ? '' : '<b>(blackout)</b>'} · water ${L.civic.supply.water}/${L.civic.supply.waterDemand} · fuel ${L.utilities.fuel} drums · reservoir ${L.utilities.reservoir} kL<br>Taxes today ${money(s.taxes)} · wages ${money(s.wages)} · recycled ${s.recycled} · to landfill ${s.landfill}</p>
       ${powerNetworkHTML(L.civic)}<h3>Trucks</h3><p>${L.trucks.map((t) => esc(`${t.driver || 'Spare'}: ${t.state}`)).join('<br>')}</p>
+      <h3>Resident yarns — exactly what they said</h3>${yarnHTML||'<p>No conversations recorded yet. Let the town run or visit the pub.</p>'}
       <h3>News</h3><ul class="news">${L.news.map((e) => `<li><span class="dim">${esc(e.t)}</span> ${esc(e.text)}</li>`).join('')}</ul>`,
     actions: [{ label: '📊 Town accounts', run: () => economyPanel(life, () => ledgerPanel(life)) }],
   };

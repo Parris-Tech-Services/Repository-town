@@ -1,6 +1,6 @@
 // A civic building's doorway is a WORLD transition, not a hole in its solid
 // exterior collider. South-side doors face negative Z and need their trigger
-// outside the building wall (the player has a non-zero collision radius).
+// outside the building wall (the player's radius is 0.35m).
 export function civicEntranceZone(place) {
   if(place?.side==='south')return {
     x0:place.door.x-1.0,x1:place.door.x+1.0,

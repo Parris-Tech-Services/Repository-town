@@ -68,30 +68,79 @@ export function playerHome(t, coordinate) {
   if (parcel.owner==='visitor' && (!parcel.tenant || parcel.tenant==='visitor')) return parcel;
   return null;
 }
-function sleepUntilMorning(t, p, label) {
-  if(t.minute>=360 && t.minute<1080)return 'Overnight sleep starts at 18:00. Come back this evening.';
-  const mins=(6*60-t.minute+1440)%1440||480;
-  const n=Math.min(480,Math.max(300,mins));
-  for(let done=0;done<n;done+=.5)t.tick(Math.min(.5,n-done));
-  p.fatigue=clamp(p.fatigue-95);
-  p.hunger=clamp(p.hunger+7);
-  p.lastSleptDay=t.day;
-  t.log('The visitor slept at '+label+' and woke up rested.');
-  return 'You slept at '+label+'. It is Day '+t.day+' '+t.time()+'. Fatigue '+Math.round(p.fatigue)+'%, hunger '+Math.round(p.hunger)+'%.';
+// Sleep choices share one clock and physiology model with the legacy hotel/home API.
+export function sleepChoices(t) {
+  const options=[
+    {label:'Power nap · 30 minutes',duration:30,minutes:30},
+    {label:'Rest · 1 hour',duration:60,minutes:60},
+    {label:'Nap · 2 hours',duration:120,minutes:120},
+    {label:'Sleep · 4 hours',duration:240,minutes:240},
+    {label:'Sleep · 6 hours',duration:360,minutes:360},
+    {label:'Full night · 8 hours',duration:480,minutes:480}
+  ];
+  if(t.minute>=18*60||t.minute<6*60){
+    const minutes=(6*60-t.minute+1440)%1440||1440;
+    if(minutes<=720)options.push({label:'Sleep until 06:00',duration:'morning',minutes});
+  }
+  return options;
 }
-export function sleepPlayer(t,site='hotel',room=null) {
+function sleepLength(t, duration) {
+  if(duration==null) return t.minute>=360&&t.minute<1080?120:((360-t.minute+1440)%1440||1440);
+  if(duration==='morning')return t.minute>=1080||t.minute<360?((360-t.minute+1440)%1440||1440):null;
+  return [30,60,120,240,360,480].includes(duration)?duration:null;
+}
+// The session splits a long sleep into small, real town ticks. UI can show time
+// passing over several frames; tests and other callers can complete it immediately.
+export function createSleepSession(t,site='hotel',room=null,duration=null) {
   const p=startNeeds(t);
+  let label='the Railway Hotel';
   if(site==='home'){
     const parcel=playerHome(t,room);
-    if(!parcel)return 'This bed belongs to someone else. Rent or buy a vacant home before sleeping here.';
-    return sleepUntilMorning(t,p,parcel.name);
+    if(!parcel)return {ok:false,error:'This bed belongs to someone else. Rent or buy a vacant home before sleeping here.'};
+    label=parcel.name;
+  }else{
+    const valid=p.hotelBooking&&(p.hotelBooking.day===t.day||(t.minute<360&&p.hotelBooking.day===t.day-1));
+    if(site!=='hotel'||!valid)return {ok:false,error:'You need to book a hotel room for tonight first.'};
+    if(room!==null&&room!==p.hotelBooking.room)return {ok:false,error:'Your key is for guest room '+p.hotelBooking.room+'.'};
   }
-  const valid=p.hotelBooking&&(p.hotelBooking.day===t.day||(t.minute<360&&p.hotelBooking.day===t.day-1));
-  if(site!=='hotel'||!valid)return 'You need to book a hotel room for tonight first.';
-  if(room!==null&&room!==p.hotelBooking.room)return 'Your key is for guest room '+p.hotelBooking.room+'.';
-  const result=sleepUntilMorning(t,p,'the Railway Hotel');
-  if(result.startsWith('You slept'))p.hotelBooking=null;
-  return result.replace('You slept at the Railway Hotel.', 'You slept at the hotel.');
+  const minutes=sleepLength(t,duration);
+  if(!Number.isFinite(minutes)||minutes<1||minutes>720)return {ok:false,error:'Choose a valid rest duration (up to 12 hours).'};
+  const fatigueBefore=p.fatigue;
+  let elapsed=0, finished=false;
+  const startDay=t.day, startTime=t.time();
+  return {
+    ok:true,minutes,startDay,startTime,
+    get remaining(){return minutes-elapsed;},
+    advance(amount) {
+      if(finished)throw new Error('This rest has already ended.');
+      if(!Number.isFinite(amount)||amount<=0)throw new Error('Rest progress must be positive.');
+      const stepMinutes=Math.min(amount,minutes-elapsed);
+      for(let done=0;done<stepMinutes;done+=0.5)t.tick(Math.min(0.5,stepMinutes-done));
+      elapsed+=stepMinutes;
+      return minutes-elapsed;
+    },
+    finish() {
+      if(finished)throw new Error('This rest has already ended.');
+      if(minutes-elapsed>0.00001)throw new Error('Rest cannot finish before its town time has elapsed.');
+      finished=true;
+      // Short naps help; long uninterrupted sleep restores more. Ordinary town
+      // hunger accrues during the same hours, without extra arbitrary meal costs.
+      const recovery=Math.min(95,Math.min(minutes,120)*0.35+Math.max(0,minutes-120)*0.12);
+      p.fatigue=clamp(fatigueBefore-recovery);
+      if(minutes>=240)p.lastSleptDay=t.day;
+      if(site==='hotel'&&p.hotelBooking&&(t.day>p.hotelBooking.day&&t.minute>=360))
+        p.hotelBooking=null;
+      const action=minutes===120?'took a two-hour nap':minutes<=60?'rested':'slept';
+      t.log('The visitor '+action+' at '+label+' for '+Math.round(minutes)+' minutes.');
+      return 'You '+action+' at '+(site==='hotel'?'the hotel':label)+'. It is Day '+t.day+' '+t.time()+'. Fatigue '+Math.round(p.fatigue)+'%, hunger '+Math.round(p.hunger)+'%.';
+    }
+  };
+}
+export function sleepPlayer(t,site='hotel',room=null,duration=null) {
+  const session=createSleepSession(t,site,room,duration);
+  if(!session.ok)return session.error;
+  while(session.remaining>0)session.advance(Math.min(12,session.remaining));
+  return session.finish();
 }
 export function needsReport(t){
   const p=startNeeds(t),all=t.villagers;
