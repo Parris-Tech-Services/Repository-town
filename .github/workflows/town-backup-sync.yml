@@ -1,9 +1,14 @@
 name: Mirror verified Repository Town main to GitHub Pages
 # This independent release gate also verifies expanded public hours and safe staffing
 # so the returns-cage choice cannot silently leave an unchanged modal open.
-# Paused automatic releases to protect the GitHub Actions budget. Run manually as needed.
+# Budget-controlled one-off recovery: push triggers only when this workflow file itself changes.
+# Regular changes in either repository still do NOT auto-trigger a full rebuild.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/town-backup-sync.yml'
 permissions:
   contents: write
   pages: write
