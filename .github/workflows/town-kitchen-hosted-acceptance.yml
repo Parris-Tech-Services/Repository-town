@@ -51,6 +51,14 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: Apply focused keyboard movement QA regression (test only)
+        working-directory: source
+        run: |
+          set -euo pipefail
+          # The deployed source is still pinned above; import only the test
+          # correction for retained focus on the closed utilities-panel button.
+          git fetch --no-tags --depth=1 origin 3689e0bde9f41b149067d8b445d91af34a7fa790
+          git show FETCH_HEAD:repository-town/tests/pub-utilities-browser.mjs > repository-town/tests/pub-utilities-browser.mjs
       - name: Run real desktop and Android browser acceptance against hosted URL
         working-directory: source/repository-town
         env:
