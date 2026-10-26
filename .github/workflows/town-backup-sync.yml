@@ -90,6 +90,7 @@ jobs:
           done
           curl -fsSI http://127.0.0.1:8091/ >/dev/null
           node tests/webgl-playtest.mjs
+          TOWN_URL=http://127.0.0.1:8091/ node tests/pub-id-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always() && steps.verified.outputs.changed == 'true'
         with:
@@ -138,3 +139,5 @@ jobs:
 # Verified backup recovery from JoshMemory source 34594eae5425596c072e0507872c325f0807eb56 after preserving two historical Pages-only assets
 
 # Verified Pages mirror retry after exact two-code-upgrade continuity guard 18f9e93b887dda04368056008681b0140ad48913
+
+# Publish the canonical pub ID discoverability fix after source PR #220 is merged.
