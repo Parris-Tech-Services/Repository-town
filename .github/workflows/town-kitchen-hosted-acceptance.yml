@@ -1,0 +1,72 @@
+name: Town kitchen hosted acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'release.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: town-kitchen-hosted-acceptance
+  cancel-in-progress: false
+jobs:
+  hosted-kitchen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - name: Confirm public mirror carries the kitchen release
+        id: identity
+        env:
+          EXPECTED_KITCHEN_COMMIT: fad613dc56f47860b4f53bf6df95c74a3e674eaf
+        run: |
+          set -euo pipefail
+          endpoint="https://parris-tech-services.github.io/Repository-town/release.json?v=$GITHUB_SHA"
+          for attempt in $(seq 1 80); do
+            if curl -fsSL --max-time 16 -H 'Cache-Control: no-cache' "$endpoint" -o /tmp/town-release.json; then
+              actual=$(node -e "try{console.log(require('/tmp/town-release.json').sourceCommit||'')}catch{console.log('')}")
+              if [[ "$actual" == "$EXPECTED_KITCHEN_COMMIT" ]]; then
+                node -e "const x=require('/tmp/town-release.json'); if(!x.contentHash||!x.files?.['index.html']||!x.files?.['main.js']) process.exit(1)"
+                echo "sha=$actual" >> "$GITHUB_OUTPUT"
+                echo "Live Pages SHA $actual"
+                break
+              fi
+              echo "Attempt $attempt: hosted source $actual, expecting $EXPECTED_KITCHEN_COMMIT"
+            fi
+            if [[ "$attempt" -eq 80 ]]; then echo "::error::Host never served expected pub-kitchen source"; exit 1; fi
+            sleep 10
+          done
+      - uses: actions/checkout@v4
+        with:
+          repository: joshualparris/JoshMemory
+          ref: ${{ steps.identity.outputs.sha }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install QA dependencies and Chromium
+        working-directory: source/repository-town
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Run real desktop and Android browser acceptance against hosted URL
+        working-directory: source/repository-town
+        env:
+          TOWN_URL: https://parris-tech-services.github.io/Repository-town/
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          node tests/pub-compliance-browser.mjs
+          node tests/pub-utilities-browser.mjs
+          node tests/pub-expansion-browser.mjs
+      - name: Retain screenshot evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosted-kitchen-desktop-android-${{ github.run_id }}
+          path: |
+            source/repository-town/audit/pub/completion/
+            source/repository-town/audit/pub-utilities/
+          retention-days: 14
+          if-no-files-found: ignore
