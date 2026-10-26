@@ -1,0 +1,68 @@
+name: Town post office hosted acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/town-post-office-hosted.yml'
+      - 'release.json'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: town-post-office-hosted
+  cancel-in-progress: false
+jobs:
+  postal-live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 28
+    steps:
+      - name: Confirm exact published source release (not merely deployed build)
+        env:
+          EXPECTED_SHA: 1617742d2babe68a53328aa5908a17bab78c64c4
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 75); do
+            curl -fsSL --max-time 12 -H 'Cache-Control: no-cache'               "https://parris-tech-services.github.io/Repository-town/release.json?post=$GITHUB_SHA-$attempt"               -o /tmp/site-release.json || true
+            actual=$(node -e "try{console.log(require('/tmp/site-release.json').sourceCommit || '')}catch{console.log('')}")
+            if [[ "$actual" == "$EXPECTED_SHA" ]]; then
+              test "$(node -p "require('/tmp/site-release.json').contentHash.length")" -ge 32
+              echo "Exact post-office source $actual served by GitHub Pages."
+              exit 0
+            fi
+            echo "Published SHA: $actual; require $EXPECTED_SHA ($attempt/75)"
+            sleep 10
+          done
+          echo "::error::Public Pages never served exact post office release $EXPECTED_SHA"
+          exit 1
+      - uses: actions/checkout@v4
+        with:
+          repository: joshualparris/JoshMemory
+          ref: 1617742d2babe68a53328aa5908a17bab78c64c4
+          persist-credentials: false
+          path: source
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/repository-town/package-lock.json
+      - name: Install pinned dependencies and Chromium
+        working-directory: source/repository-town
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Actual desktop and Android touch post-office acceptance on live Pages
+        working-directory: source/repository-town
+        env:
+          TOWN_URL: https://parris-tech-services.github.io/Repository-town/
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          node --test tests/post-office-architecture.mjs
+          node tests/post-office-browser.mjs
+      - name: Upload real exterior and interior screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-post-office-phone-desktop-${{ github.run_id }}
+          path: source/repository-town/test-results/post-office/
+          retention-days: 14
+          if-no-files-found: ignore
