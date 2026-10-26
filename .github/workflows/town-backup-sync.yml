@@ -131,6 +131,11 @@ jobs:
           git -C site add -A
           if ! git -C site diff --cached --quiet; then
             git -C site commit -m "Mirror verified Town main $RELEASE_SHA"
+            # Site-only QA/workflow commits may land during this lengthy build.
+            # Rebase the verified release onto the newest remote main, retaining
+            # all concurrent additions; never force-push or discard conflicts.
+            git -C site fetch --depth=50 origin main
+            git -C site rebase FETCH_HEAD
             git -C site push origin HEAD:main
           fi
           gh api --method POST "repos/${GITHUB_REPOSITORY}/pages/builds" --silent
