@@ -1,5 +1,8 @@
+import { buildPubFacade, PUB_ENVELOPE } from './pub-envelope.js';
+import { buildExpansionFacade } from './town-expansion-facades.js';
 import { shopLightingOn, interiorPalette } from './lighting.js';
 import * as THREE from 'three';
+import {pilotMains} from './electrical-pilot.js';
 import { makeSeat } from './seats.js';
 import { SIGNAL_CROSSINGS, crossingState } from './traffic-signals.js';
 import { Builder, GLASS } from './builder.js';
@@ -91,7 +94,7 @@ export const SIGN_AT = {
   // sprites, these remain readable even when proximity labels are hidden.
   soyfarm: [0, 3.75, 7.135, 7.12, 0.69, '#254632', '#f7f2df'],
   soyplant: [0, 4.75, 7.135, 8.36, 0.71, '#264c57', '#f3f7f5'],
-  pub: [0, 6.15, 7.08, 7, 0.9, '#1f3a2a', '#f1e3b5'], hall: [0, 7.1, 7.99, 11, 0.62, '#d8d2c4', '#3a3226'],
+  pub: [0, 3.91, 7.15, 7, 0.65, '#1f3a2a', '#f1e3b5'], hall: [0, 7.1, 7.99, 11, 0.62, '#d8d2c4', '#3a3226'],
   school: [0, 3.9, 7.07, 6, 0.7, '#f3ead2', '#2a3a5a'], depot: [0, 3.9, 7.07, 6, 0.7, '#2b2118', '#f1e3b5'],
   mill: [0, 3.2, 4.06, 2.6, 0.55, '#f3ead2', '#3a2a1e'], bank: [0, 5.62, 7.83, 9, 0.55, '#e8e2d2', '#3a3226'],
   power: [-2, 3.4, 7.09, 5, 0.6, '#e8c23a', '#222222'], waterworks: [-4, 2.95, 5.58, 4.4, 0.5, '#e9eef2', '#1f4a6a'],
@@ -167,13 +170,7 @@ const BUILD = {
     return { w: 11, d: 9 };
   },
   pub(b) {
-    b.box(0x7a4a3a, 14, 7, 11, 0, 3.5, 1.5); b.box(0x3a2a22, 14.6, 0.8, 11.6, 0, 7.4, 1.5);
-    for (let f = 0; f < 2; f++) for (const x of [-4.5, -1.6, 1.6, 4.5]) if (!(f === 0 && Math.abs(x) < 2)) b.box(GLASS, 1.2, 1.4, 0.08, x, 1.6 + f * 3.1, 7.04);
-    b.box(0x2a1e18, 1.6, 2.5, 0.06, 0, 1.25, 7.04);
-    b.block(DARK, 0.1, 3.4, 0.1, 6.4, 0, 8.2); b.box(DARK, 1.2, 0.08, 0.08, 5.9, 3.3, 8.2); b.box(0x2f5a3a, 0.9, 1.1, 0.08, 5.6, 2.6, 8.2);
-    for (const x of [-5.2, -4.4]) b.cyl(0x7a5030, 0.4, 0.95, x, 0.48, 8.0);
-    for (const x of [-2.8, 3.2]) { b.block(WOOD, 1.8, 0.08, 0.8, x, 0.75, 9.6); b.block(WOOD, 1.8, 0.45, 0.3, x, 0, 9.0); b.block(WOOD, 1.8, 0.45, 0.3, x, 0, 10.2); }
-    return { w: 14, d: 11 };
+    return buildPubFacade(b,{GLASS,DARK,WOOD});
   },
   post(b) {
     shopfront(b, 11, 9, 4.6, 0xe8d2b0, 0xb8413a, null);
@@ -659,7 +656,8 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     // One shared atlas and merged mesh keeps these signs cheap on Android.
     // Operational 24h sites publish visitor reception hours, not factory hours.
     const south=p.side==='south';
-    signs.push({place:p,text:openingHoursLabel(p),x:p.x+3.35,y:2.95,
+    if(p.side==='north') { /* north-facing signs are authored after facade */ }
+    else signs.push({place:p,text:openingHoursLabel(p),x:p.x+3.35,y:2.95,
       z:south?FIELD_Z0-0.25:LOT8_Z+7.28,
       w:4.35,h:0.40,rotY:south?Math.PI:0,bg:'#f2ead6',fg:'#302c25'});
     const b = new Builder(); b.glass = [];
@@ -691,6 +689,27 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
       finish();
       continue;
     }
+    // North-facing infill on an EXISTING road (e.g. Creative Court 7-N).
+    // Massing fits within 12 m depth between the roadway and rear of row's houses.
+    if (p.side === 'north') {
+      b.at(p.x,0,p.originZ,Math.PI,()=>{fp=buildExpansionFacade(b,p);});
+      finish();
+      // The facade front is p.originZ-7. The entire footprint stays behind it (+z).
+      if(fp)colliders.push({x0:p.x-fp.w/2,x1:p.x+fp.w/2,
+        z0:p.originZ-7,z1:p.originZ-7+fp.d});
+      const marker=makeLabel(p.address+' · '+p.name,'house');
+      marker.position.set(p.x,3.6,p.originZ-10.8);group.add(marker);labels.push(marker);
+      // Nameboard faces northwards onto existing road; no fake new street.
+      signs.push({place:p,text:p.name,x:p.x,y:p.style==='heritage'?4.9:3.75,
+        z:p.originZ-7.35,w:10.2,h:.57,rotY:Math.PI,
+        bg:'#263b4e',fg:'#f5eddb'});
+      signs.push({place:p,text:openingHoursLabel(p),x:p.x+3.0,y:2.95,
+        z:p.originZ-7.35,w:4.3,h:.36,rotY:Math.PI,
+        bg:'#f3e8d5',fg:'#293840'});
+      spots.push({key:'place:'+p.id,id:p.id,pos:new THREE.Vector3(p.x,0,p.front.z),
+        label:p.name+' — visit '+p.address});
+      continue;
+    }
     // The wheat farm's silos stand behind its shed, clear of the end of the avenue (9.5 m out).
     b.at(p.x, 0, LOT8_Z, 0, () => {
       if (kind === 'farm') { const [w, d, h, wall, roof] = FARM_SHED[p.id]; shed(b, w, d, h, wall, roof); fp = { w, d }; if (p.id === 'silo') { for (const x of [2.5, 6]) { b.solid(2.6, 2.6, x, -9); b.cyl(0xc8c8c0, 1.4, 9, x, 4.5, -9); b.cone(0xa8a8a0, 1.6, 1.4, x, 9.7, -9); } } }
@@ -700,7 +719,16 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     if (SHOPFRONT[p.id]) { const [w, h] = SHOPFRONT[p.id], [bg, fg] = SHOP_COLOURS[p.id]; signs.push({place:p, text: p.name, x: p.x, y: h - 0.55, z: LOT8_Z + 7.15, w: w * 0.6, h: 0.7, bg, fg, cross: p.id === 'clinic' }); }
     else if (SIGN_AT[p.id]) { const at = SIGN_AT[p.id]; signs.push({place:p, text: p.name, x: p.x + at[0], y: at[1], z: LOT8_Z + at[2], w: at[3], h: at[4], bg: at[5], fg: at[6] }); }
     else if (p.kind === 'farm') farmSign(p);
-    if (fp) colliders.push({ x0: p.x - fp.w / 2, x1: p.x + fp.w / 2, z0: LOT8_Z + (fp.front ?? 7) - fp.d, z1: LOT8_Z + (fp.front ?? 7) });
+    if (fp) {
+      const z0=LOT8_Z+(fp.front??7)-fp.d,z1=LOT8_Z+(fp.front??7);
+      // Retain the outside-world solid body but leave the pub's actual front
+      // doorway clear through the entry transition, including wheelchair radius.
+      if(p.id==='pub')colliders.push(
+        {x0:p.x-fp.w/2,x1:p.x-1.05,z0,z1},
+        {x0:p.x+1.05,x1:p.x+fp.w/2,z0,z1},
+        {x0:p.x-1.05,x1:p.x+1.05,z0,z1:z1-.8});
+      else colliders.push({x0:p.x-fp.w/2,x1:p.x+fp.w/2,z0,z1});
+    }
     if (kind === 'square') {
       colliders.push({ x0: p.x - 2.7, x1: p.x + 2.7, z0: LOT8_Z - 6.7, z1: LOT8_Z - 1.3 });
       for(const [i,x,z,yaw] of [[0,-6,-4,Math.PI/2],[1,6,-4,-Math.PI/2],[2,0,3,Math.PI],[3,0,-11,0]])
@@ -763,7 +791,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     return out;
   };
   // Street furniture on the pavement where one shop meets the next: a bench and a bin.
-  const shopXs = [...life.places.values()].filter((q) => q.side !== 'south' && q.kind !== 'farm').map((q) => q.x).sort((a, b) => a - b);
+  const shopXs = [...life.places.values()].filter((q) => q.side !== 'south' && q.side !== 'north' && q.kind !== 'farm').map((q) => q.x).sort((a, b) => a - b);
   for (let i = 0; i + 1 < shopXs.length; i++) {
     const x = (shopXs[i] + shopXs[i + 1]) / 2, z = LOT8_Z + 8.3;
     if (AVENUES.some((a) => Math.abs(a - x) < 6)) continue;
@@ -969,16 +997,17 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     if (stars.visible) { stars.position.copy(skyCam.position); stars.material.opacity = Math.min(1, dark * 1.2); moon.position.set(skyCam.position.x - Math.cos(a) * 140, skyCam.position.y + Math.max(30, -Math.sin(a) * 120), skyCam.position.z - 60); }
     // A blackout puts out the windows and street lamps (src/world/life.js utilities).
     const powered = life.civic.powerGrid ? life.civic.powerGrid.served > 0 : life.civic.supply.ok; // a local fault must not darken every lamp
-    town.setNight(powered ? dark : 0, m, eye, powered);
+    town.setNight(powered ? dark : 0, m, eye, powered, id=>pilotMains(life,id) ?? powered);
     for (const {place,material} of shopGlazing)
-      material.emissiveIntensity = powered && shopLightingOn(place,m) ? dark*.75 : 0;
+      material.emissiveIntensity = (pilotMains(life,'B:'+place.id) ?? powered) && shopLightingOn(place,m) ? dark*.75 : 0;
     signBoards?.userData.setLighting(dark, powered, m);
     // Electric circuits are separate from sunset and reception access.
     for(const child of scene.children)if(child.userData.updateLighting){
       const id=child.userData.lightingSite;
       const customer=['clinic','waterworks','sewage','bakery'].includes(id)?id:
         ['mill','foundry','soyplant'].includes(id)?'industry':null;
-      child.userData.updateLighting(customer?life.gridPowered(customer):powered);
+      const pilot=pilotMains(life,id.startsWith('H:')||id.startsWith('B:')?id:'B:'+id);
+      child.userData.updateLighting(pilot??(customer?life.gridPowered(customer):powered));
     }
     for (const d of doorCards) d.m.material = facilityAccess(life, d.q).allowed ? d.openMat : d.closedMat;
     lightMat.emissiveIntensity = dark > 0.3 ? 1.4 : 0;  // vehicle headlights run on their own batteries
@@ -1074,7 +1103,7 @@ export function createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog }) 
     }
   }
 
-  return { life, group, colliders, spots, seats, people, update, save, events, skyColour: bg, skyParts: [stars, rain, moon], building: (id) => buildings.get(id) || [], placeFront: (id) => { const p = life.place(id); return p.side === 'south' ? { x: p.x, z: FIELD_Z0 - 4.4, yaw: Math.PI } : { x: p.x, z: LOT8_Z + 12.6, yaw: 0 }; } };
+  return { life, group, colliders, spots, seats, people, update, save, events, skyColour: bg, skyParts: [stars, rain, moon], building: (id) => buildings.get(id) || [], placeFront: (id) => { const p = life.place(id); return p.side === 'north' ? { x:p.x,z:p.front.z,yaw:Math.PI } : p.side === 'south' ? { x: p.x, z: FIELD_Z0 - 4.4, yaw: Math.PI } : { x: p.x, z: LOT8_Z + 12.6, yaw: 0 }; } };
 }
 
 // What a villager calls out as the player passes, from the time of day and what they're up to.

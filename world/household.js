@@ -1,3 +1,5 @@
+import { pilotMains } from './electrical-pilot.js';
+
 // Villager households: what each home holds and how the people in it live there. Pure logic, no
 // three.js, deterministic (no Math.random or wall clock). life.js calls in from its hourly step,
 // its daily close and the villagers' plans; townpanels and the house interiors read the results.
@@ -75,7 +77,7 @@ export function takeFood(v, need) {
     const usable = v.larder.filter((b) => b.g === g && !(b.store === 'freezer' && g === 'lamb')).sort((a, b) => b.wear - a.wear);
     for (const b of usable) { const t = Math.min(n, b.n); b.n -= t; n -= t; if (!n) break; }
   }
-  v.larder = v.larder.filter((b) => b.n > 0);
+  v.larder.splice(0,v.larder.length,...v.larder.filter((b) => b.n > 0));
 }
 
 // Unpacks shopping: chilled things in the fridge, bulk meat and spare bread in the freezer.
@@ -199,6 +201,16 @@ function payFrom(v, amount) {
   return paid;
 }
 
+// Shared spouses contribute to one home's bills, without merging their personal wallets.
+function payHomeFrom(life,v,amount){
+ const members=(life.villagers||[]).filter(p=>p.home?.coordinate===v.home?.coordinate&&p.household===v.household);
+ if(members.length<2)return payFrom(v,amount);
+ let paid=0;const share=amount/members.length;
+ for(const p of members)paid=r2(paid+payFrom(p,share));
+ for(const p of members)if(paid<amount)paid=r2(paid+payFrom(p,r2(amount-paid)));
+ return paid;
+}
+
 // Daily housing payment (direct debit): rent to the council's housing office, or the mortgage
 // repayment to the Community Bank. Returns { council, bank } amounts paid for the town's books.
 export function payHousing(life, v) {
@@ -207,7 +219,7 @@ export function payHousing(life, v) {
   const m = h.mortgage, base = h.tenure === 'rent' ? HOUSING.rent : m ? Math.min(HOUSING.repayment, r2(m.balance * (1 + HOUSING.mortgageRate))) : 0;
   const due = r2(base + (v.housingArrears || 0));
   if (!(due > 0)) return out;
-  const paid = payFrom(v, due);
+  const paid = payHomeFrom(life,v,due);
   if (!m) { out.council = paid; if(h.tenure==='rent')out.rentPaid=Math.min(paid,HOUSING.rent+(v.housingArrears||0)); }
   else {
     out.bank = paid;
@@ -237,7 +249,7 @@ function settleBills(life, v, late) {
   let toCouncil = 0;
   for (const b of v.household.bills) {
     if (b.paid || (late && life.day <= b.due)) continue;
-    const amount = r2(b.amount + (late ? HOUSING.lateFee : 0)), paid = payFrom(v, amount);
+    const amount = r2(b.amount + (late ? HOUSING.lateFee : 0)), paid = payHomeFrom(life,v,amount);
     toCouncil = r2(toCouncil + paid);
     if (paid >= amount) { b.paid = true; if (late) mail(life, v, 'Town Council utilities', 'Overdue bill collected', `Bill ${b.id} was overdue, so $${amount} (with a $${HOUSING.lateFee} late fee) was taken by direct debit.`, { kind: 'notice' }); }
     else { b.amount = r2(amount - paid); }
@@ -290,9 +302,17 @@ export function householdHour(life, hour) {
   const restricted = life.civic.supply && life.civic.supply.waterOk === false;
   let power = 0, water = 0;
   const notes = [];
-  for (const v of life.villagers) {
-    const h = ensureHousehold(v), home = atHome(v), awake = home && v.step?.kind !== 'sleep';
-    const powered = life.gridPowered(feederFor(v));
+  const byHome=new Map();
+  for(const v of life.villagers){
+    if(!byHome.has(v.home.coordinate))byHome.set(v.home.coordinate,[]);
+    byHome.get(v.home.coordinate).push(v);
+  }
+  for(const residents of byHome.values()){
+    const v=residents[0],h=ensureHousehold(v);
+    const home=residents.some(atHome),awakeResidents=residents.filter(p=>atHome(p)&&p.step?.kind!=='sleep');
+    const awake=awakeResidents.length>0;
+    const pilot=pilotMains(life,'H:'+v.home.coordinate);
+    const powered=pilot===null?life.gridPowered(feederFor(v)):pilot;
     // Climate: the reverse-cycle unit holds 21° while someone is up (or when it's bitter or sweltering).
     const drift = t + 3;
     const extreme = drift < 10 || drift > 30;
@@ -302,17 +322,21 @@ export function householdHour(life, hour) {
     let p = powered ? POWER.fridge + POWER.freezer : 0;
     if (h.lights) p += POWER.lights;
     if (h.climate !== 'off') p += POWER.climate;
-    const k = v.step?.kind;
-    if (awake && k === 'cook') p += POWER.oven;
-    if (awake && (k === 'relax')) p += POWER.tv;
-    if (awake && (k === 'finances' || (k === 'work' && v.work === 'home'))) p += POWER.computer;
-    if (awake && k === 'laundry') p += POWER.washer;
-    if (awake && k === 'shower') p += POWER.hotwater;
-    let w = awake ? WATER.toilet : 0;
-    if (awake && k === 'cook') w += WATER.cook;
-    if (awake && k === 'shower') w += WATER.shower;
-    if (awake && k === 'laundry') w += WATER.washer;
-    if (awake && k === 'dishes') w += WATER.dishes;
+    // Base refrigeration, lights and heating are shared ONCE; each awake adult adds use.
+    let w=0;
+    for(const person of awakeResidents){
+      const k=person.step?.kind;
+      if(powered&&k==='cook')p+=POWER.oven;
+      if(powered&&k==='relax')p+=POWER.tv;
+      if(powered&&(k==='finances'||(k==='work'&&person.work==='home')))p+=POWER.computer;
+      if(powered&&k==='laundry')p+=POWER.washer;
+      if(powered&&k==='shower')p+=POWER.hotwater;
+      w+=WATER.toilet;
+      if(k==='cook')w+=WATER.cook;
+      if(k==='shower')w+=WATER.shower;
+      if(k==='laundry')w+=WATER.washer;
+      if(k==='dishes')w+=WATER.dishes;
+    }
     // Garden: dries in the heat and wind, soaks up rain; the sprinkler runs at 6am if it's dry and
     // there are no water restrictions.
     h.garden = clamp(h.garden - (t > 25 ? 3 : t > 15 ? 1.6 : 0.8) + (life.civic.weather === 'rainy' ? 4 : 0), 0, 100);
@@ -324,7 +348,7 @@ export function householdHour(life, hour) {
       const tossed = v.larder.filter((b) => b.store === 'fridge' && CHILLED.has(b.g));
       if (tossed.length) {
         const n = tossed.reduce((s, b) => s + b.n, 0);
-        v.larder = v.larder.filter((b) => !tossed.includes(b));
+        v.larder.splice(0,v.larder.length,...v.larder.filter((b) => !tossed.includes(b)));
         h.threwOut += n; life.rubbish(n);
         v.memory = 'the power was off for hours, so the fridge food had to go';
         notes.push(`${v.name} threw out ${tossed.map((b) => say(b.g, b.n)).join(' and ')} after four hours without power.`);
@@ -341,7 +365,7 @@ export function householdHour(life, hour) {
       if (b.wear >= 1) spoiled.push(b);
     }
     if (spoiled.length) {
-      v.larder = v.larder.filter((b) => !spoiled.includes(b));
+      v.larder.splice(0,v.larder.length,...v.larder.filter((b) => !spoiled.includes(b)));
       const n = spoiled.reduce((s, b) => s + b.n, 0);
       h.threwOut += n; life.rubbish(n);
       v.memory = `had to throw out ${spoiled.map((b) => say(b.g, b.n)).join(' and ')} that had gone off`;

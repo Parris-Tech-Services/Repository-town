@@ -1,3 +1,11 @@
+import {pubPoolPanel} from './ui/pub-pool-panel.js';
+import {pubKenoPanel} from './ui/pub-venue-panel.js';
+import {pubStandardsPanel} from './ui/pub-standards-panel.js';
+import {pubRearExitPose} from './world/pub-physical-plan-2026.js';
+import { pubUtilitiesPanel } from './ui/pub-utilities-panel.js';
+import {electricalPilotPanel} from './ui/electrical-pilot-panel.js';
+import {initialiseElectricalPilot,pilotReport,pilotAction} from './world/electrical-pilot.js';
+import {createElectricalPilotVisuals,attachPilotInteriorLighting} from './world/electrical-pilot-visuals.js';
 import {occupationPanel} from './ui/occupation-panels.js';
 import {installWorkplay} from './world/workplay-view.js';
 import { mountCompanion } from './ui/companion.js';
@@ -131,6 +139,8 @@ async function start() {
   // Town life: farms, shops, trucks and 32 villagers with jobs and meals (src/world/life.js).
   const townLife = createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog });
   const life = townLife.life;
+  initialiseElectricalPilot(life);
+  const pilotVisuals=createElectricalPilotVisuals(town.group,life);
   const emergencyVisuals = createEmergencyResponseVisuals(life, town);
   // The Town Guide kiosk by the start (src/world/town.js) opens the guide panel.
   const guideSpot = { key: 'guide', pos: town.guidePos, label: '🗺️ Read the Town Guide', guide: true };
@@ -183,6 +193,12 @@ async function start() {
   tableOrder.textContent='🍽 Order at table';
   tableOrder.hidden=true;tableOrder.title='Order food or drinks without leaving your seat';
   $('needs-strip').append(tableOrder);
+  // The Grid launcher lives INSIDE the collapsible + menu, alongside Ask AI.
+  // It is deliberately not a floating overlay over the mobile game.
+  $('btn-electrical-grid').onclick=()=>{
+    document.dispatchEvent(new Event('town:collapse-hud'));
+    openPanel(electricalPilotPanel(life));
+  };
   tableOrder.onclick=()=>{
     if(player.seated && inside?.place && ['cafe','pub'].includes(inside.place.id))
       openPanel(placePanel(life,inside.place.id));
@@ -317,9 +333,12 @@ async function start() {
     const base = byCoord.get(coord);
     // Memorial buildings are public galleries, not a randomly assigned NPC home.
     // Never append generic kitchen, bathroom/laundry or living room overlays.
-    const h = resident && !base.memorial ? { ...base, household: resident.name } : base;
+    const family=life.householdMembers(coord);
+    const h=resident && !base.memorial&&!base.heritage?{...base,household:resident.name,
+      householdResidents:family.residents,marriedCouple:family.sharedDoubleBed}:base;
     const floors = h.memorial ? null : createFloorStack(h, makeLabel);
     const built = floors ? floors.levels[0] : buildInterior(h, makeLabel);
+    attachPilotInteriorLighting(built.group,'H:'+coord);
     // Every storey shares the ground floor's frame: front door at the interior's exit, facing +z
     // like the house itself, so the windows look out on the real street (src/world/windows.js).
     const lot = town.lots.get(coord), ex = built.exitZone;
@@ -374,10 +393,12 @@ async function start() {
     }
     const yawIn = player.yaw;
     const built=buildCivicInterior(site,makeLabel,life);
+    attachPilotInteriorLighting(built.group,'B:'+site.id);
     installPhysicalJobs(built,site,makeLabel,life);
     built.workplay=installWorkplay(built,site,makeLabel,life,{openPanel,closePanel,status,sound:kind=>ambience.work(kind),getVisitors:()=>inside?.visitors?.entries});
     if(site.id==='bakery')built.bakeryImmersion=installBakeryImmersion(built,life,camera,makeLabel);
     const staff=populateShopStaff(site,life,built,makeLabel);
+    built.attachPubStaff?.(staff);
     const brief={coordinate:site.col+'8',name:site.name,kind:site.kind,
       street:'High Street',summary:'Explore the shop interior and speak to staff.'};
     const ex=built.exitZone;
@@ -386,6 +407,7 @@ async function start() {
     scene.add(built.group);town.group.visible=false;
     scene.background.set(INDOOR);scene.fog=null;
     world=new CollisionWorld(built.colliders);
+    world.dynamic=()=>built.doors.filter(d=>d.userData.privacy&&d.userData.open<.8).map(d=>({x0:d.userData.centre.x-.7,x1:d.userData.centre.x+.7,z0:d.userData.centre.z-.06,z1:d.userData.centre.z+.06}));
     // The same TownLife villagers that shop, eat and work here now have
     // visible bodies, independent of the staff member behind the counter.
     inside.visitors=createShopVisitors(site,life,inside,makeLabel,inside.people);
@@ -396,7 +418,7 @@ async function start() {
     status(access.reason==='supervised' ? access.message+' You may return through the entrance at any time.' : 'Inside '+site.name+'. Walk to the counter or back through the entrance to leave.');
     return true;
   }
-  function leave(placeOutside = true, keepFacing = false) {
+  function leave(placeOutside = true, keepFacing = false, via = 'front') {
     if (!inside) return;
     const yawInside = player.yaw;
     closePanel(); npcChat.close();
@@ -414,7 +436,8 @@ async function start() {
     town.group.visible = true; scene.background.set(SKY); scene.fog = fog;
     if (placeOutside) {
       if (shop) {
-        const pose = civicExitPose(shop, [...townWorld.all, ...townWorld.dynamic()], player.radius+0.08);
+        const boxes=[...townWorld.all,...townWorld.dynamic()];
+        const pose = via==='rear'&&shop.id==='pub'?pubRearExitPose(shop,boxes,player.radius+.08):civicExitPose(shop,boxes,player.radius+0.08);
         if (pose) player.place(pose.x,pose.z,keepFacing ? yawInside + doorTurn(shop) : pose.yaw);
         else spawn(); // use safe Town Guide location instead of clipping into a wall
       } else { const l=town.lots.get(coord);player.place(l.doorPos.x,l.doorPos.z+4,keepFacing ? yawInside : Math.PI); }
@@ -523,8 +546,11 @@ async function start() {
     $('panel-body').innerHTML = content.body;
     content.mount?.($('panel-body'));
     const actions = $('panel-actions'); actions.innerHTML = '';
+    let primary = $('panel-primary-actions');
+    if (!primary) { primary = document.createElement('div'); primary.id = 'panel-primary-actions'; primary.className = 'row'; $('panel-body').before(primary); }
+    primary.innerHTML = ''; primary.hidden = !(content.actions || []).some(a => a.primary);
     for (const a of content.actions || []) {
-      if (a.url) { const el = document.createElement('a'); el.href = a.url; el.target = '_blank'; el.rel = 'noopener'; el.textContent = a.label; el.className = 'btn-link'; actions.append(el); }
+      if (a.url) { const el = document.createElement('a'); el.href = a.url; el.target = '_blank'; el.rel = 'noopener'; el.textContent = a.label; el.className = 'btn-link'; (a.primary ? primary : actions).append(el); }
       else { const el = document.createElement('button'); el.textContent = a.label; el.onclick = () => { if (a.play) return startGame(a.play); const beforeWallet=life.civic.player.wallet;
           const next = a.run ? a.run() : content.onAnswer(a.answer);
           if (next && player.seated && ['cafe','pub'].includes(inside?.place?.id) &&
@@ -532,7 +558,7 @@ async function start() {
             next.body='<p><b>🍽 Your order has been brought to your table.</b></p>'+next.body;
           }
           if (next) openPanel(next, thing); };
-        if (a.play) el.className = 'play'; actions.append(el); }
+        if (a.play) el.className = 'play'; (a.primary ? primary : actions).append(el); }
     }
     $('panel').hidden = false;
     $('card').hidden = true;
@@ -717,6 +743,13 @@ async function start() {
       const thing = nearThing, request = ++interactionRequest, house = inside;
       const restricted=restrictedServiceAction(life,inside?.place,thing);
       if(restricted){status(restricted);return;}
+      if(thing.act?.do==='pub-pool'){openPanel(pubPoolPanel(life),thing);return;}
+      if(thing.act?.do==='pub-keno'){openPanel(pubKenoPanel(life),thing);return;}
+      if(thing.act?.do==='pub-standards'){openPanel(pubStandardsPanel(life),thing);return;}
+      if(thing.act?.do==='pub-rear-exit'){leave(true,false,'rear');return;}
+      if(thing.act?.do==='pub-utilities'){
+        openPanel(pubUtilitiesPanel(life),thing);return;
+      }
       if(thing.act?.do==='soy-action'){
         const result=life.soyAction(inside?.place?.id,thing.act.action);
         status(result.message);
@@ -977,6 +1010,7 @@ async function start() {
       :[];
     const view = mode === 'house' && inside?.view ? inside.view.place(camera, outdoorCam) : null;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo, view });
+    pilotVisuals.update();
     yarns.update(dt,mode);
     inside?.soyVisuals?.();
     if(mode==='house'&&inside?.bakeryImmersion)inside.bakeryImmersion.update(dt,t);
@@ -1138,12 +1172,14 @@ async function start() {
       for (const d of inside.doors) {
         const dist = Math.hypot(d.userData.centre.x - player.pos.x, d.userData.centre.z - player.pos.z);
         const residentNear = (inside.people || []).some((p) => Math.hypot(d.userData.centre.x - p.pos.x, d.userData.centre.z - p.pos.z) < 2.0);
-        const target = dist < 2.8 || residentNear ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.baseRot + d.userData.open * 1.5;
+        const target = d.userData.privacy ? 0 : dist < 2.8 || residentNear ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.baseRot + d.userData.open * 1.5 * (d.userData.swing || 1);
       }
       const ex = inside.exitZone;
+      const rear=inside.rearExitZone;
       // Generous exit area: the doorway, the last 1.3 m inside it and anywhere beyond it, centred on
       // the actual door, so a slow frame or the floor-change cooldown cannot carry the player past it.
-      if (floorDoorCooldown <= 0 && Math.abs(player.pos.x - (ex.x0 + ex.x1) / 2) < 1.55 && player.pos.z > inside.rooms[0].z1 - 1.3) { if (inside.floors && inside.floorIndex > 0) changeFloor(inside.floorIndex - 1); else leave(true, true); }
+      if(rear&&floorDoorCooldown<=0&&player.pos.x>rear.x0&&player.pos.x<rear.x1&&player.pos.z<rear.z1){leave(true,false,'rear');}
+      else if (floorDoorCooldown <= 0 && Math.abs(player.pos.x - (ex.x0 + ex.x1) / 2) < 1.55 && player.pos.z > inside.rooms[0].z1 - 1.3) { if (inside.floors && inside.floorIndex > 0) changeFloor(inside.floorIndex - 1); else leave(true, true); }
       else {
         nearThing = player.seated ? null : pickNear();
         nearNPC = null;
@@ -1155,10 +1191,16 @@ async function start() {
         animate(inside.dynamics, t, active);
         inside.visitors?.update(dt,t,player);
         inside.workplay?.update(dt,player);
+        inside.utilityVisuals?.(life,dt,t);
+        if(inside?.house?.coordinate){
+          const p=pilotReport(life)?.siteById?.['H:'+inside.house.coordinate];
+          if(p)inside.group.userData.updateLighting?.(p.mains);
+        }
         inside.workStationVisuals?.();
         // Shop patrons are synchronised with the authoritative town economy
         // above; they have their own movement and seated animation.
         for (const p of inside.people || []) if(!p.key?.startsWith('visitor:'))p.update(dt,t,player,p.plan);
+        inside.afterPeople?.(life,dt,t);
         if (cardTimer > 0 && (cardTimer -= dt) <= 0) $('card').hidden = true;
         // A single short label may identify the object directly ahead;
         // all room, employee, shelf and distant station labels stay quiet.
@@ -1193,6 +1235,8 @@ async function start() {
     // Test harness fast-forwards genuine simulation steps, allowing attendants to
     // commute to their workstations before the browser tries a staffed entrance.
     // Access-control decisions remain unchanged: no unlocked-door shortcut.
+    pilotGrid:()=>pilotReport(life),
+    pilotAction:(command)=>{const answer=pilotAction(life,command);pilotVisuals.update();return answer;},
     advanceSimulation(minutes) {
       if (!Number.isFinite(minutes) || minutes < 0 || minutes > 240) return false;
       for (let elapsed = 0; elapsed < minutes; elapsed += 0.5)

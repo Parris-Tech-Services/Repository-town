@@ -220,17 +220,18 @@ function buildOnce(house, makeLabel, attempt) {
   // include beds. Add a connected sleeping room, never a floating prop.
   const authored=house.int;
   const hasBed=authored.rooms.some(r=>(r.props||[]).some(e=>(typeof e==='string'?e:e[0])==='bed'));
+  const bedLabel=house.marriedCouple?'Shared double bed · '+house.householdResidents.map(p=>p.name).join(' & '):'Bed';
   const roomsWithBeds=authored.rooms.map(r=>({...r,props:(r.props||[]).map(e=>{
     const type=typeof e==='string'?e:e[0];
-    return type==='bed'?[type,typeof e==='string'?'Bed':e[1]||'Bed',{...(Array.isArray(e)?e[2]||{}:{}),do:'sleep'}]:e;
+    return type==='bed'?[type,house.marriedCouple?bedLabel:typeof e==='string'?'Bed':e[1]||'Bed',{...(Array.isArray(e)?e[2]||{}:{}),do:'sleep'}]:e;
   })}));
-  if(!hasBed && !house.memorial)roomsWithBeds.push({
+  if(!hasBed && !house.memorial&&!house.heritage)roomsWithBeds.push({
     name:'Bedroom',w:8,d:8,archive:true,
-    props:[['bed','Sleep in bed',{do:'sleep'}],['wardrobe','Clothes wardrobe'],['lamp','Bedside lamp']]
+    props:[['bed',house.marriedCouple?bedLabel:'Sleep in bed',{do:'sleep'}],['wardrobe','Clothes wardrobe'],['lamp','Bedside lamp'],...(house.marriedCouple?[['lamp','Second bedside lamp']]:[])]
   });
   // A villager's own home (house.household = their name) also gets the rooms they live in:
   // the appliances here are the ones src/world/household.js runs, and using them opens that household.
-  if(house.household && !house.memorial){
+  if(house.household && !house.memorial&&!house.heritage){
     const use=(what)=>({do:'household',what});
     const have=new Set(authored.rooms.map(r=>r.name));
     const add=(name,w,d,props)=>{ if(!have.has(name))roomsWithBeds.push({name,w,d,archive:true,household:true,props}); };

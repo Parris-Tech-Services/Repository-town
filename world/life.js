@@ -1,3 +1,10 @@
+import {validPubVenue,drinkPubBeer,pubDrinkAvailable,reservePubDrink} from './pub-venue.js';
+import {validPool} from './pub-pool.js';
+import {pubAlcoholRefusal,pubAdmission,validPubStandards} from './pub-standards.js';
+import {ORIGINAL_WORKERS,EXPANSION_WORKERS,MARRIED_COUPLES,EXPANSION_IDENTITIES,createMarriages,reconcileSpouseHouseholds,householdMembers as familyMembers} from './resident-families.js';
+import { EXPANSION_SITES } from './town-expansion.js';
+import { tickPubUtilities, pubKitchenReady, pubAction, validPubUtilities } from './pub-utilities.js';
+import { tickElectricalPilot, validElectricalPilotState } from './electrical-pilot.js';
 import {workAssetFault} from './occupation-work.js';
 import { placeAddress } from './addresses.js';
 import {soyState,soyAction,soyHourly,soyReport,takeSoyShipment,deliverSoyShipment} from './soy-chain.js';
@@ -148,6 +155,7 @@ export const PLACE_DEFS = [
   { col: 'A', side: 'south', id: 'securityoffice', name: 'High Street Security Office', kind: 'service', opens: 8*60, closes: 20*60 },
   { col: 'D', side: 'south', id: 'securityhq', name: 'Central West Security Headquarters', kind: 'service', opens: 7*60, closes: 22*60 },
   { col: 'Z', side: 'south', id: 'locksmith', name: 'Macquarie Locksmith & Keys', kind: 'service', opens: 8*60, closes: 18*60 },
+  ...EXPANSION_SITES,
 ];
 
 const JOBS = [
@@ -212,7 +220,7 @@ const RELIEF_ROLES = {
  coop:'poultry shed attendant', orchard:'orchard hand', garden:'garden produce assistant',
  silo:'grain handling operator'
 };
-export const RELIEF_SITES = PLACE_DEFS.filter(p=>p.kind!=='home' && p.kind!=='park' &&
+export const RELIEF_SITES = PLACE_DEFS.filter(p=>!p.expansion && p.kind!=='home' && p.kind!=='park' &&
  JOBS.filter(j=>j[1]===p.id && !['student','retired'].includes(j[0])).length<2).map(p=>p.id);
 for (const id of RELIEF_SITES) {
  const p=PLACE_DEFS.find(place=>place.id===id);
@@ -233,6 +241,12 @@ JOBS.push(
   ['qualified locksmith','locksmith',8*60,18*60],
   ['locksmith apprentice','locksmith',9*60,17*60],
 );
+// One named worker per new business. New sites never create duplicate automatic relief shifts.
+export const EXPANSION_LOCAL_STAFFED=Object.freeze(EXPANSION_SITES.map(p=>p.id));
+JOBS.push(...EXPANSION_SITES.map(p=>[p.staffRole,p.id,
+  Math.max(6*60,p.opens||8*60),Math.min(22*60,p.closes||17*60)]));
+if(JOBS.length!==ORIGINAL_WORKERS+EXPANSION_WORKERS)
+ throw new Error('Original worker IDs or expanded roster changed unexpectedly');
 export const ROSTER_SIZE = JOBS.length;
 // Villager names; src/ui/social.js keeps their friendships and grudges.
 export const VILLAGER_NAMES = ['Mabel', 'Arlo', 'Bea', 'Cas', 'Dot', 'Ezra', 'Flo', 'Gus', 'Hattie', 'Ivo', 'June', 'Kip', 'Lou', 'Merv', 'Nora', 'Ollie',
@@ -241,6 +255,25 @@ export const VILLAGER_NAMES = ['Mabel', 'Arlo', 'Bea', 'Cas', 'Dot', 'Ezra', 'Fl
   'Lena', 'Miles', 'Serena', 'Damon', 'Pippa', 'Marcus', 'Talia', 'Neve', 'Owen', 'Priya', 'Hugh',
   'Tess', 'Kieran', 'Ruby', 'Felix', 'Jules', 'Maeve', 'Aidan', 'Iris', 'Oscar', 'Rosa', 'Nina', 'Mina',
   'Amber', 'Benji', 'Celia', 'Dev', 'Emmett', 'Fiona', 'Georgia', 'Hazel', 'Indi', 'Jonah', 'Kara', 'Lachlan', 'Molly', 'Nathan', 'Olivia', 'Parker', 'Quinn', 'Rowan', 'Sienna', 'Tobias', 'Ursula', 'Violet', 'Willow', 'Xavier', 'Yasmin', 'Zeke', 'Adelaide', 'Bram', 'Clara', 'Dario', 'Eamon', 'Jett', 'Leila', 'Nadine', 'Mack', 'Ronan', 'Taryn', 'Yvette'];
+
+// Keep all established villager IDs/names unchanged for old saves, and give
+// expansion workers distinct, deterministic full names rather than repeating
+// the 99 original first names (which broke the 188-worker release acceptance).
+// New workers are local people, not temporary duplicates of an existing NPC.
+const EXPANSION_SURNAMES=Object.freeze([
+  'Morgan','Nguyen','Kendall','Singh','Taylor','Olsen','Carver','Khan',
+  'Wilson','Dawson','Miller','Chen','Evans','Patel','Marsh','Hughes',
+  'Brooks','Jones','Williams','Cooper','White','Brown','Murphy','Reed'
+]);
+export function residentName(id){
+  if(id>=ORIGINAL_WORKERS && id<ORIGINAL_WORKERS+EXPANSION_WORKERS)
+    return EXPANSION_IDENTITIES[id-ORIGINAL_WORKERS].name;
+  const given=VILLAGER_NAMES[id % VILLAGER_NAMES.length];
+  if(id < VILLAGER_NAMES.length)return given;
+  const cycle=Math.floor(id/VILLAGER_NAMES.length);
+  const family=EXPANSION_SURNAMES[(id*7+cycle)%EXPANSION_SURNAMES.length];
+  return given+' '+family+(cycle>1?' '+cycle:'');
+}
 
 // Home meals: [name, ingredients]. Villagers cook the first one their pantry can make.
 const MEALS = {
@@ -410,9 +443,16 @@ export class TownLife {
     this.places = new Map();
     for (const d of PLACE_DEFS) {
       const col = d.col.charCodeAt(0) - 65;
-      const x = lotX(col), south = d.side === 'south';
+      const x = lotX(col), south = d.side === 'south', north = d.side === 'north';
+      // North-facing expansions use the already-built road immediately before their plot row.
+      // Row 7-N fronts road 6; its 10 m-deep facade ends before the existing 7-S houses.
+      const existingRoad = north ? ROAD(d.row-2) : ROAD(7);
+      const originZ = north ? existingRoad + 14 : south ? FIELD_Z0 + 7 : LOT8_Z;
       this.places.set(d.id, {
-        ...d, address: placeAddress(d), target: d.target ? {...d.target} : undefined, x, door: { x, z: south ? FIELD_Z0 - 0.5 : LOT8_Z + 7.5 }, front: { x, z: south ? FIELD_Z0 - 2.2 : LOT8_Z + 9.3 }, curb: { x, z: south ? ROAD(7) + 1.7 : ROAD(7) - 1.7 },
+        ...d, address: placeAddress(d), target: d.target ? {...d.target} : undefined,
+        x, originZ, door: { x, z: north ? existingRoad + 7.3 : south ? FIELD_Z0 - 0.5 : LOT8_Z + 7.5 },
+        front: { x, z: north ? existingRoad + 5.4 : south ? FIELD_Z0 - 2.2 : LOT8_Z + 9.3 },
+        curb: { x, z: north ? existingRoad + 1.7 : south ? ROAD(7) + 1.7 : ROAD(7) - 1.7 },
         stock: Object.fromEntries(Object.keys(d.target || {}).map((k) => [k, Math.round(d.target[k] * 0.6)])), till: 0, out: {},
       });
     }
@@ -459,20 +499,37 @@ export class TownLife {
     const legacyHomes = homes.filter((_, i) => i % step === Math.min(2, step - 1)).slice(0, legacyCount);
     const occupied = new Set(legacyHomes.map(h => h.coordinate));
     const availableHomes = homes.filter(h => !occupied.has(h.coordinate));
-    const extraCount = Math.max(0, JOBS.length - legacyCount);
-    const extraStep = Math.max(1, Math.floor(availableHomes.length / Math.max(1, extraCount)));
-    const extraHomes = availableHomes.filter((_, i) => i % extraStep === 0).slice(0, extraCount);
-    const picks = [...legacyHomes, ...extraHomes];
+    // The actual town has 188 homes. Unit/integration fixtures sometimes have fewer:
+    // they should keep their historical short-roster behaviour, not throw on missing lots.
+    let picks;
+    if(homes.length<188){
+      const extraCount=Math.max(0,JOBS.length-legacyCount);
+      const extraStep=Math.max(1,Math.floor(availableHomes.length/Math.max(1,extraCount)));
+      const extraHomes=availableHomes.filter((_,i)=>i%extraStep===0).slice(0,extraCount);
+      picks=[...legacyHomes,...extraHomes];
+    }else{
+      // Reproduce exactly the old 99-person home allocation for saved games.
+      const oldExtra=ORIGINAL_WORKERS-legacyCount;
+      const extraStep=Math.max(1,Math.floor(availableHomes.length/oldExtra));
+      const oldExtraHomes=availableHomes.filter((_,i)=>i%extraStep===0).slice(0,oldExtra);
+      const oldHomes=[...legacyHomes,...oldExtraHomes];
+      if(oldHomes.length!==ORIGINAL_WORKERS)throw new Error('Historical residents need 99 plots');
+      const oldCoords=new Set(oldHomes.map(h=>h.coordinate));
+      const newSingles=homes.filter(h=>!oldCoords.has(h.coordinate)).slice(0,EXPANSION_WORKERS-MARRIED_COUPLES);
+      if(newSingles.length!==EXPANSION_WORKERS-MARRIED_COUPLES)throw new Error('Insufficient town housing');
+      picks=[...oldHomes,...oldHomes.slice(0,MARRIED_COUPLES),...newSingles];
+    }
     this.villagers = JOBS.slice(0, picks.length).map(([job, work, start, end], i) => {
       const home = picks[i];
       return {
-        id: i, name: VILLAGER_NAMES[i % VILLAGER_NAMES.length], job, work, start, end, home,
+        id: i, name: residentName(i), job, work, start, end, home,
         x: home.door.x, z: home.door.z + 2, inside: true, path: [], step: null, activity: 'asleep at home',
         hunger: 25 + this.rand() * 20, wallet: 40 + Math.round(this.rand() * 40),
         larder: [], pantry: { bread: 2, eggs: 2, milk: 1, veg: 1, fruit: 1, lamb: i % 3 === 0 ? 0 : 1, pie: 0 },
         carrying: null, lastMeal: null, meals: [], seen: [], doneToday: {},
       };
     });
+    this.marriages=homes.length>=188?createMarriages(this.villagers):[];
     // A larger population needs more shelves and wholesale storage, not magically replenished stock.
     // Goods still originate at farms and are physically delivered by the existing trucks.
     const demandScale=Math.max(1,this.villagers.length/legacyCount);
@@ -484,6 +541,7 @@ export class TownLife {
     }
     // Each household's food, appliances, bills and chores (src/world/household.js).
     for (const v of this.villagers) { v.larder = null; ensureHousehold(v); }
+    if(this.marriages.length)reconcileSpouseHouseholds(this.villagers);
     // Persisted NPC social lives advance alongside the town rather than only in UI.
     this.social=freshSocialState();
     // Dedicated marked bays beside the depot, outside the 2 travel lanes.
@@ -534,6 +592,8 @@ export class TownLife {
     const hourly = Math.floor(before / 60) !== Math.floor(this.minute / 60) || this.minute < before;
     if (hourly) { this.everyHour(); advanceTradeEducation(this); }
     advanceNeeds(this,minutes);
+    tickElectricalPilot(this,minutes);
+    tickPubUtilities(this,minutes);
     advanceTownTradeOperations(this,minutes);
     advanceEmergency(this);
     for (const o of readyOrders(this)) this.collectOrder(o);
@@ -599,7 +659,20 @@ export class TownLife {
     const c = this.civic;
     accrueInterest(this);
     // Council rates: every household pays $15 a day towards wages and services.
-    let rates = 0; for (const v of this.villagers) { const due = 15 + (v.rateArrears || 0), r = Math.min(due, Math.max(0, v.wallet)); v.wallet -= r; rates += r; v.rateArrears = Math.min(60, Math.round((due - r) * 100) / 100); }
+    let rates=0;
+    const seenProperties=new Set();
+    for(const v of this.villagers){
+      const key=v.home.coordinate;
+      if(seenProperties.has(key))continue;
+      seenProperties.add(key);
+      const payers=this.villagers.filter(p=>p.home.coordinate===key);
+      let due=15+Math.max(...payers.map(p=>p.rateArrears||0));
+      for(const payer of payers){
+        const amount=Math.min(due,Math.max(0,payer.wallet));
+        payer.wallet-=amount;due-=amount;rates+=amount;
+      }
+      for(const payer of payers)payer.rateArrears=Math.min(60,Math.round(due*100)/100);
+    }
     c.treasury += rates; this.stats.rates = rates; budgetRevenue(this,rates,'rates');
     // Like any country town, the council relies on state and federal grants.
     budgetRevenue(this, dailyGrants(this), 'grant');
@@ -733,17 +806,17 @@ export class TownLife {
     }
     if (h === 16 && (fo.stock.metal || 0) >= 14) { const n = fo.stock.metal - 4; fo.stock.metal = 4; fo.till += n * 12; this.log(`The foundry exported ${n} tonnes of metal by rail for $${n * 12}.`); }
     if (h === 8 && (this.place('power').stock.fuel || 0) < 60) this.log('The Power Station is low on fuel; a truck is due from the depot.');
-    // Evening regional cost-of-living support for the poorest households.
+    // Morning and evening regional cost-of-living support for low-liquidity residents.
     // It is means tested and moves existing council money, never mints funds.
-    if(h===21 && this.civic.treasury>600){
+    if((h===7||h===21) && this.civic.treasury>600){
       let assisted=0;
       for(const v of this.villagers){
-        if(v.wallet>=35 || v.job==='student' || v.job==='retired')continue;
+        if(v.wallet+(v.savings||0)>=35)continue;
         const amount=Math.min(35-v.wallet,Math.max(0,this.civic.treasury-600),28);
         if(amount<=0)break;
         this.civic.treasury-=amount;v.wallet+=amount;assisted++;
       }
-      if(assisted)this.log('Council household hardship payments supported '+assisted+' low-income workers.');
+      if(assisted)this.log('Council household hardship payments supported '+assisted+' low-income residents.');
     }
 
     // Post: letters the visitor posts arrive the next day with the postie.
@@ -758,6 +831,7 @@ export class TownLife {
   // ── The visitor (the player): wallet, bank, bag and civic actions. Each returns a message. ──
   shelves(p) { return p.id === 'bakery' ? p.out : p.stock; }
   buyItem(shopId, good) {
+    if(shopId==='pub'&&['pub_beer','pub_bottled_beer'].includes(good))return this.buyMenuItem(shopId,good);
     const p = this.place(shopId), me = this.civic.player, price = GOODS[good].price;
     if (!this.open(p)) return `The ${p.name} is closed — it opens at ${fmt(p.opens)}.`;
     const service = shopService(this, p);
@@ -770,6 +844,7 @@ export class TownLife {
     return `You buy ${amount(good, 1)} for $${price}. It's in your bag.`;
   }
   menuAvailability(shopId, good) {
+    if(shopId==='pub'&&['pub_beer','pub_bottled_beer'].includes(good))return pubDrinkAvailable(this,good);
     const recipe = VENUE_MENU[shopId]?.[good];
     if (!recipe) return false;
     const stock = this.shelves(this.place(shopId));
@@ -785,8 +860,14 @@ export class TownLife {
     if (!service.available) return service.message;
     if (!this.menuAvailability(shopId, good)) return `Sorry, ${GOODS[good].name} is sold out until ingredients arrive.`;
     if (me.wallet < price) return `You need ${price} but have ${me.wallet}.`;
+    if(shopId==='pub' && ['pub_parmy','pub_roast','pub_pie','pub_chips'].includes(good)){
+      if(!pubKitchenReady(this))return 'The pub kitchen is out of service. Check its utilities panel.';
+      pubAction(this,'meal');
+    }
+    if(shopId==='pub'&&['pub_beer','pub_bottled_beer'].includes(good)){const refusal=pubAlcoholRefusal(this);if(refusal)return refusal;}
     const stock = this.shelves(p);
-    if ((stock[good] || 0) > 0) stock[good]--;
+    if(shopId==='pub'&&['pub_beer','pub_bottled_beer'].includes(good))reservePubDrink(this,good);
+    else if ((stock[good] || 0) > 0) stock[good]--;
     else for (const [ingredient, n] of Object.entries(recipe)) stock[ingredient] -= n;
     me.wallet -= price; this.sale(p, price);
     receipt(this, 'purchase', `${GOODS[good].name} at ${p.name}`, -price);
@@ -797,6 +878,7 @@ export class TownLife {
     return `You order ${GOODS[good].name} for $${price}. Ticket ${t.ticket}: ready in about ${t.minutes} minutes, at ${fmt(t.ready % 1440)}.`;
   }
   sellItem(shopId, good) {
+    if(['pub_beer','pub_bottled_beer'].includes(good))return 'Alcohol cannot be sold back through the general goods counter.';
     const p = this.place(shopId), me = this.civic.player, pay = Math.max(1, Math.floor(GOODS[good].price * 0.6));
     const service = shopService(this, p);
     if (!service.available) return service.message;
@@ -805,7 +887,7 @@ export class TownLife {
     me.bag[good]--; this.shelves(p)[good] = (this.shelves(p)[good] || 0) + 1; p.till -= pay; me.wallet += pay; recordEarning(this, pay); receipt(this, 'sale', `Sold ${GOODS[good].name} to ${p.name}`, pay);
     return `The ${p.name} buys it back for $${pay}.`;
   }
-  eatItem(good) { return eatPlayer(this,good); }
+  eatItem(good) { if(['pub_beer','pub_bottled_beer'].includes(good))return drinkPubBeer(this,good);return eatPlayer(this,good); }
   soyAction(site,action){return soyAction(this,site,action);}
   soyReport(){return soyReport(this);}
   orderCafe(itemId) { return orderCafe(this,itemId); }
@@ -1585,6 +1667,9 @@ export class TownLife {
     // a permanent overlapping crowd in front of the Bakery and General Store.
     // Indoor shop staff already have their corresponding real-NPC counter model.
     const place=this.places.get(s.at);
+    if(s.at==='pub'&&!['work','preopen'].includes(s.kind)&&!v.inside&&!pubAdmission(this).allowed){
+      v.inside=false;if(s.kind==='eatout'){this.missedServiceMeal(v,'The pub is full or evacuating.');return;}this.goThen(v,this.place('square').front,{kind:'idle',at:'square',dur:10,activity:'waiting outside the full or closed pub'});return;
+    }
     const indoorWork=['work','preopen'].includes(s.kind)&&place&&!['farm','depot','park','home'].includes(place.kind);
     const indoorVisit=['buy','snack','eatout'].includes(s.kind)&&place&&
       ['shop','cafe','pub'].includes(place.kind);
@@ -1690,6 +1775,7 @@ export class TownLife {
     if (!ok) this.stats.stockouts++;
     if (!ok) { v.activity = `found the ${p.name} out of food`; this.log(`The ${p.name} ran out of food and had to turn ${v.name} away.`); return; }
     if (v.wallet < price) { v.activity = `could not afford a meal at ${p.name}`; v.memory = `could not afford a meal at ${p.name}`; return; }
+    if(where==='pub'){if(!pubKitchenReady(this)){this.missedServiceMeal(v,'Pub kitchen utilities unavailable.');return;}pubAction(this,'meal');}
     for (const g of uses) if ((p.stock[g] || 0) > 0) { p.stock[g]--; break; }
     v.wallet -= price; noteSpend(v, 'out', price); this.sale(p, price); this.stats.mealsOut++;
     this.eat(v, dish); v.activity = `${v.step.activity} — ${dish}`;
@@ -1766,13 +1852,16 @@ export class TownLife {
   }
 
   // ── For chat, the guide and the ledger ──
+  householdMembers(coordinate){return familyMembers(this.villagers,coordinate);}
   describe(v) {
     const last = v.lastMeal ? `${v.lastMeal.name} at ${fmt(v.lastMeal.at)}${v.lastMeal.day !== this.day ? ' yesterday' : ''}` : 'nothing yet today';
     const pantry = larderSummary(v);
     return { name: v.name, job: v.job, workplace: v.work === 'home' ? 'from home' : this.place(v.work).name, home: `${v.home.coordinate} (${v.home.name})`,
       now: v.activity, lastMeal: last, recentMeals: v.meals, hungry: v.hunger > 60,
       fatigue: Math.round(v.fatigue), tired: v.fatigue>70, pantry, wallet: v.wallet,
-      carrying: v.carrying, memory: v.memory || null, social: this.socialSummary(v.name) };
+      carrying: v.carrying, memory: v.memory || null, social: this.socialSummary(v.name),
+      relationship:{status:v.maritalStatus,spouse:v.spouseName||null,
+      marriageYear:v.marriageYear||null,backstory:v.relationshipBackstory||null} };
   }
   socialSummary(name) { return socialReport(this.social,name,this.villagers.map(v=>v.name)); }
   news(n = 6) { return this.events.slice(0, n); }
@@ -1797,6 +1886,11 @@ export class TownLife {
     if (s.saveVersion !== undefined && (!Number.isInteger(s.saveVersion) || s.saveVersion < 1 || s.saveVersion > 3)) return false;
     if (!Number.isFinite(s.day) || s.day < 1 || !Number.isFinite(s.minute) || s.minute < 0 || s.minute >= 1440) return false;
     if (s.civic !== undefined && (s.civic === null || typeof s.civic !== 'object' || Array.isArray(s.civic))) return false;
+    if(s.civic?.pubVenue!==undefined&&!validPubVenue(s.civic.pubVenue))return false;
+    if(s.civic?.pubPool!==undefined&&!validPool(s.civic.pubPool))return false;
+    if(s.civic?.pubStandards!==undefined&&!validPubStandards(s.civic.pubStandards))return false;
+    if(s.civic?.pubUtilities!==undefined && !validPubUtilities(s.civic.pubUtilities))return false;
+    if(s.civic?.electricalPilot!==undefined && !validElectricalPilotState(s.civic.electricalPilot))return false;
     if (s.places !== undefined && !Array.isArray(s.places)) return false;
     if (s.villagers !== undefined && !Array.isArray(s.villagers)) return false;
     let sim = null;
@@ -1836,6 +1930,7 @@ export class TownLife {
       this.parcels = sim.parcels;
     }
     for (const v of this.villagers) { if (!Array.isArray(v.larder)) v.larder = null; ensureHousehold(v); }
+    if(this.marriages.length)reconcileSpouseHouseholds(this.villagers);
     startNeeds(this);
     return true;
   }
