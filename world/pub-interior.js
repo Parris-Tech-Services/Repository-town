@@ -1,12 +1,14 @@
+import {addPubVerticalCore,PUB_SHAFT_CUTS} from './pub-vertical-core.js';
 import {installPubPresentation} from './pub-presentation.js';
 import {pubServiceLayers} from './pub-service-visuals.js';
 import {addPubPlant} from './pub-plant.js';
-import {pubStandards} from './pub-standards.js';
+import {pubConnected,pubStandards} from './pub-standards.js';
 import {PUB_PHYSICAL_PLAN_2026,pubExitLayout} from './pub-physical-plan-2026.js';
 import {PUB_ENVELOPE,pubFacadeCoordinate} from './pub-envelope.js';
 import {pubHistoryDescription} from './pub-history.js';
 import { pubUtilities, pubStatus } from './pub-utilities.js';
 import { createKit, ROOM } from './interior-kit.js';
+import {PUB_KITCHEN_LAYOUT} from './pub-kitchen-layout.js';
 
 // The Merged Branch, laid out like an Australian country pub:
 //   • A long timber bar at the back with beer taps, a glass-and-spirit back-bar, a till and bar stools.
@@ -38,14 +40,14 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
   const warm = new THREE.PointLight(0xffc880, 1.2, 16, 1.5); warm.position.set(0, 3.4, -1); group.add(warm);
 
   const WOOD = 0x6d4a30, DARKW = 0x3f2b1c, BRASS = 0xc9a24a, GREEN = 0x2f5a3f, LEATHER = 0x7a3b2c, STEEL = 0xc4c8cc;
-  k.shell({ wall: 0x8a6a4e, ceiling: 0x4d382a, floor: 0x5a4030, rearExit:{x0:-1.05,x1:1.05} });
-  for (let i = 0; i < 14; i++) box(0.96, 0.014, 17.4, -6.5 + i, 0.004, -3, i % 2 ? 0x573d2c : 0x634633);   // plank floor
+  k.shell({ wall: 0x8a6a4e, ceiling: 0x4d382a, floor: 0x5a4030, rearExit:{x0:-1.05,x1:1.05},floorCuts:PUB_SHAFT_CUTS,ceilingCuts:PUB_SHAFT_CUTS });
+  // Floor slab supplies the timber finish around the real stair/lift cutouts.   // plank floor
   box(2.2, 0.03, 1.2, 0, 0.02, 5.0, 0x3a2a20);                                                              // door mat
   // dado panelling, ceiling beams, wall lights
   for(const x of [-4.05,4.05])box(5.8,1.2,.06,x,.6,BACK+.15,DARKW);
   for (const sx of [-EDGE + 0.15, EDGE - 0.15]) box(0.06, 1.2, 17.4, sx, 0.6, -3, DARKW);
-  for (let z = -10; z <= 4; z += 3.5) box(W - 0.4, 0.22, 0.25, 0, 3.7, z, DARKW);
-  for (const [x, z] of [[-4, 1], [4, 1], [-4, -3], [4, -7]]) { cyl(0.01, 0.01, 0.7, x, 3.5, z, 0x222222, {}, 4); cyl(0.06, 0.28, 0.24, x, 3.0, z, 0x2f5a3f, { e: 0xffc060 }, 12); }
+  for(let z=-10;z<=4;z+=3.5){if(z>0)box(5.4,.22,.25,3.8,3.7,z,DARKW);else box(W-.4,.22,.25,0,3.7,z,DARKW);}
+  for (const [x, z] of [[4,1],[-4,-3],[4,-7]]) { cyl(0.01, 0.01, 0.7, x, 3.5, z, 0x222222, {}, 4); cyl(0.06, 0.28, 0.24, x, 3.0, z, 0x2f5a3f, { e: 0xffc060 }, 12); }
 
   // ── bar ──
   for(const [w,x]of [[6.3,-1.05],[1.1,3.65]]){solid(w,1.1,.9,x,.55,CZ,WOOD);box(w,.07,1.1,x,1.13,CZ,DARKW);box(w,.08,.1,x,.35,CZ+.5,BRASS);}
@@ -98,7 +100,7 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
       for(const lx of [-.17,.17])for(const lz of [-.17,.17])box(.045,.44,.045,cx+lx,.22,cz+lz,DARKW);
     }
   };
-  const tables=[[3.6,3],[5.7,4.4],...[-5.2,-2.4].flatMap(x=>[-1.2,1.8,4.7].map(z=>[x,z]))];
+  const tables=[[3.6,3],[5.7,4.4],[-2.4,-1.2]];
   for(const [x,z]of tables)table(x,z);
   // fireplace on the left wall
   solid(0.7, 1.6, 2.0, -6.55, 0.8, -4.0, 0x7a5a48); box(0.1, 0.8, 1.2, -6.18, 0.5, -4.0, 0x1a1410); box(0.08, 0.3, 0.9, -6.14, 0.3, -4.0, 0xff7a2a, { e: 0xff5a10 });
@@ -107,9 +109,9 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
   solid(1.12,.85,2.03,3.8,.43,-.7,WOOD); box(.915,.05,1.83,3.8,.87,-.7,GREEN);
   // keno / TAB screens, menu board, framed pictures
   box(.08,.8,1.4,6.8,2.4,-3.6,0x1b1d22);box(.04,.7,1.3,6.74,2.4,-3.6,0x2e6a94,{e:0x1e4a74}).name='pub:television';
-  box(.06, 1.2, 2.2, -6.82, 2.5, 3.0, 0x1f2a24); text('Parmi · Roast · Pie of the day', -6.8, 2.5, 3.1);
+  box(.06,1.2,1.2,-6.82,2.5,-5.8,0x1f2a24).name='pub:menu-board';text('Parmi · Roast · Pie of the day',-6.8,2.5,-5.75);
   for (const [x, y, f] of [[-5, 2.4, 'pictureframe_medium'], [-3.2, 2.5, 'pictureframe_large_A'], [2.5, 2.5, 'pictureframe_small_B']]) { if (model(f, x, BACK + 0.28, 0, { h: 0.7 }, y - 0.35)) continue; box(0.8, 0.6, 0.05, x, y, BACK + 0.2, DARKW); box(0.66, 0.46, 0.03, x, y, BACK + 0.23, 0xb8a98a); }
-  model('lamp_standing', -6.2, -0.1, 0, { w: 0.45, d: 0.45, h: 1.6 }); model('cactus_medium_A', 6.3, 5.2, 0, { w: 0.5, d: 0.5, h: 0.6 });
+   model('cactus_medium_A', 6.3, 5.2, 0, { w: 0.5, d: 0.5, h: 0.6 });
 
   // finishing detail: beer mats, bunting, bar towels, glass rack, ceiling fans, brass rail, pool cues, stools' footrests
   for (const [x, z] of [[3.6, 3.0], [-3.6, 3.0]]) for (let i = 0; i < 4; i++) { cyl(0.05, 0.05, 0.01, x - 0.3 + (i % 2) * 0.6, 0.81, z - 0.3 + Math.floor(i / 2) * 0.6, 0xd9c8a0, {}, 10); }
@@ -117,7 +119,7 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
   for(const [w,x]of [[6.3,-1.05],[1.1,3.65]])box(w,.05,.05,x,.9,CZ+.55,BRASS);
   for(let i=0;i<9;i++)cyl(.04,.03,.14,-3.6+i*.2,2.6,BACK+.36,0xe8e0c8,{a:.6},8);
   box(1.8,.04,.3,-2.7,2.7,BACK+.36,WOOD);
-  for(const [x,z]of [[-3.8,-.5],[3.8,-.5],[0,2.5],[0,-2.5]]){cyl(.02,.02,.5,x,3.55,z,0x222222);const rotor=new THREE.Group();rotor.name='pub:ceiling-fan:'+fans.length;rotor.position.set(x,3.3,z);for(let blade=0;blade<4;blade++){const mesh=new THREE.Mesh(new THREE.BoxGeometry(.7,.025,.12),new THREE.MeshLambertMaterial({color:0xb08a60}));mesh.position.set(Math.cos(blade*Math.PI/2)*.35,0,Math.sin(blade*Math.PI/2)*.35);mesh.rotation.y=-blade*Math.PI/2;rotor.add(mesh)}group.add(rotor);fans.push(rotor)}
+  for(const [x,z]of [[-3.8,-2.0],[3.8,-.5],[0,2.5],[0,-2.5]]){cyl(.02,.02,.5,x,3.55,z,0x222222);const rotor=new THREE.Group();rotor.name='pub:ceiling-fan:'+fans.length;rotor.position.set(x,3.3,z);for(let blade=0;blade<4;blade++){const mesh=new THREE.Mesh(new THREE.BoxGeometry(.7,.025,.12),new THREE.MeshLambertMaterial({color:0xb08a60}));mesh.position.set(Math.cos(blade*Math.PI/2)*.35,0,Math.sin(blade*Math.PI/2)*.35);mesh.rotation.y=-blade*Math.PI/2;rotor.add(mesh)}group.add(rotor);fans.push(rotor)}
   for (let i = 0; i < 4; i++) cyl(0.012, 0.012, 1.4, 4.6 + i * 0.2, 1.0, -5.0, 0x8a6a40, { rz: 0.12 }, 4);
 
 
@@ -145,28 +147,100 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
   solid(.55,2.7,.12,-6.625,1.35,-6.9,0xdde4df);
   solid(.95,2.7,.12,-4.375,1.35,-6.9,0xdde4df);
   door('pub:kitchen-door',-6.35,-4.85,-6.9);
-  box(2.8,.025,4.8,-5.4,.025,-9.4,0xaebbb6);
-  solid(.9,.9,2,-6.3,.45,-10.4,STEEL); // cooker / preparation bench
-  for(const z of [-10.9,-10.2])cyl(.18,.18,.03,-6.3,.93,z,0x222222);
-  box(1.1,.3,2.1,-6.3,2.6,-10.4,STEEL);box(.35,1.4,.35,-6.3,3.4,-10.4,STEEL); // extraction hood
-  solid(.9,.9,.8,-5.7,.45,-8.4,STEEL);box(.6,.06,.5,-5.7,.94,-8.4,0x485f68);
-  cyl(.03,.03,.3,-5.7,1.1,-8.7,STEEL);
-  box(.6,1,.15,-6.8,1.4,-7.3,0xcbd1d4); // metered switchboard
-  box(.8,.55,.2,-6.7,2.1,-6.4,0x333c43); // NBN / router / communications UPS
-  // Insulated hot-water cylinder is outside in the service yard.
-  solid(.6,.8,.5,-6.5,.4,-7.7,STEEL); cyl(.02,.02,.24,-6.5,1,-7.9,STEEL);
-  text('Kitchen · separate hand basin · extraction',-4.8,2.7,-8.5);
+  // Working commercial galley: cooking and handwash on the exterior wall,
+  // preparation and dirty return on the opposite wall. Furniture footprints
+  // and visual models use the same values so the player can physically pass.
+  // A game circulation layout is not an Australian building/food-fitout approval.
+  box(2.82,.025,4.8,-5.43,.025,-9.4,0x777e7c).name='pub:kitchen:non-slip-floor';
+  // Back-of-house needs wipe-clean, light-coloured envelope surfaces instead
+  // of inheriting the pub's brown timber ceiling and tan wall treatment.
+  // Thin surface panels have no collision footprint and never span the door.
+  box(2.82,.065,4.82,-5.43,4.10,-9.4,0xe8ebeb).name='pub:kitchen:washable-ceiling';
+  box(2.81,2.84,.045,-5.43,1.42,-11.82,0xdfe7e7).name='pub:kitchen:washable-rear-wall';
+  box(.045,2.84,4.74,-6.86,1.42,-9.35,0xdbe4e4).name='pub:kitchen:washable-left-wall';
+  box(.045,2.84,4.74,-4.035,1.42,-9.35,0xe9eded).name='pub:kitchen:washable-right-wall';
+  for(const fixture of PUB_KITCHEN_LAYOUT.fixtures){
+    box(fixture.w,fixture.h,fixture.d,fixture.x,fixture.h/2,fixture.z,STEEL).name='pub:kitchen:'+fixture.id;
+    blocker(fixture.w,fixture.d,fixture.x,fixture.z);
+  }
+
+  // Commercial hot line: four burners, fry/griddle zone, splashback, oven and
+  // real extraction canopy; no centre-of-room obstruction.
+  const range=PUB_KITCHEN_LAYOUT.fixtures[0];
+  box(.72,.045,2.07,range.x,.925,range.z,0x333f45).name='pub:kitchen:range-top';
+  box(.055,1.12,2.28,-6.86,1.37,range.z,0xe5e8e6);
+  for(const z of [-11.06,-10.58,-10.1,-9.61])
+    cyl(.16,.16,.025,-6.51,.955,z,0x11191c,{},16);
+  for(const z of [-10.9,-10.42,-9.94,-9.46])
+    cyl(.045,.045,.03,-6.105,.77,z,0x23282b,{},12);
+  box(.05,.08,.53,-6.09,.48,-10.56,0x525d62).name='pub:kitchen:oven-handle';
+  box(.85,.34,2.36,-6.52,2.65,-10.3,0x9faeb6).name='pub:kitchen:extraction';
+  for(const z of [-11.2,-10.9,-10.6,-10.3,-10,-9.7,-9.4])
+    box(.64,.02,.055,-6.52,2.46,z,0x52636b);
+  box(.35,1.08,.43,-6.53,3.34,-10.3,0xa4adb2).name='pub:kitchen:exhaust-duct';
+  // Realistic compact prep fridge with ingredient bins, cutting board and
+  // integrated splashback. All decorative shelf pieces are above the aisle.
+  const prep=PUB_KITCHEN_LAYOUT.fixtures[2];
+  box(.73,.06,1.53,prep.x,.94,prep.z,0xe5e9e7).name='pub:kitchen:prep-surface';
+  box(.04,.68,1.56,-4.03,1.31,prep.z,0xdce4e6);
+  for(const z of [-9.42,-8.95,-8.48]){
+    box(.025,.055,.24,-4.77,.6,z,0x59666d);
+    box(.26,.04,.26,-4.36,1.00,z,[0x467f4d,0xad6047,0xcbb16c][Math.round((z+9.42)/.47)]);
+  }
+  box(.36,.026,.52,-4.41,1.05,-8.82,0x5aab83).name='pub:kitchen:colour-coded-board';
+  // Dedicated hand basin is separate from the dishwasher, with soap/towels.
+  const hand=PUB_KITCHEN_LAYOUT.fixtures[1];
+  box(.41,.055,.44,hand.x,.85,hand.z,0xe8eef0).name='pub:kitchen:hand-basin';
+  box(.3,.018,.33,hand.x,.887,hand.z,0x566e79);
+  cyl(.018,.018,.29,-6.54,1.08,-8.54,STEEL);
+  box(.13,.025,.035,-6.54,1.23,-8.5,STEEL);
+  box(.26,.07,.13,-6.73,1.62,-8.34,0xf2f5f5).name='pub:kitchen:handwash-sign';
+  text('HANDS ONLY',-6.7,1.84,-8.32);
+  // Dirty dishes return to the dishwasher and a separate raised clean rack;
+  // hot pass is a shallow high shelf, not a waist-high obstacle in the door.
+  const wash=PUB_KITCHEN_LAYOUT.fixtures[3];
+  box(.72,.05,.84,wash.x,.89,wash.z,0xd7e3e5).name='pub:kitchen:wash-bench';
+  box(.035,.045,.37,-4.77,.49,wash.z,0x667781);
+  box(.65,.055,.4,-4.39,1.77,-11.56,0xb9c7cc).name='pub:kitchen:clean-rack';
+  for(let n=0;n<4;n++)cyl(.12,.12,.025,-4.53+n*.09,1.83,-11.56,0xf5f3ec);
+  box(.63,.05,.47,-4.41,1.72,-7.64,0xd7dde0).name='pub:kitchen:hot-pass';
+  for(const z of [-7.76,-7.55])cyl(.12,.12,.02,-4.46,1.765,z,0xf5f5f0);
+  // Off-floor dry storage, labelled ingredients and knives within the work
+  // zone (never a freestanding trolley or a floor-collision hazard).
+  box(.43,.055,1.07,-4.28,2.15,-9.04,0xc5d2d4).name='pub:kitchen:dry-shelf';
+  for(const z of [-9.35,-9.09,-8.83,-8.57]){
+    box(.19,.25,.17,-4.31,2.31,z,[0xc5ac65,0x96a874,0x9f6259,0xb6b6a7][Math.round((z+9.35)/.26)]);
+    box(.018,.13,.06,-4.47,2.30,z,0xf1eee3);
+  }
+  for(const z of [-9.38,-9.11,-8.84])box(.025,.28,.055,-4.06,1.72,z,0x303b40);
+  box(.32,.05,.28,-6.68,1.68,-7.65,0xc4d0d1).name='pub:kitchen:temperature-log';
+  box(.28,.035,.42,-6.68,1.96,-7.65,0xf2efdf);
+
+  // Diffused protected ceiling panels and glare-controlled task illumination. Lights
+  // share the pub's actual breaker/blackout circuit; the output is artistic,
+  // not measured lux. Avoid gloomy warm domestic pendants in a food workspace.
+  const kitchenLenses=[];
+  for(const [i,[x,z]] of [[-5.54,-8.35],[-5.52,-10.65]].entries()){
+    box(1.08,.085,.67,x,3.84,z,0xb2bdc3).name='pub:kitchen:led-housing:'+(i+1);
+    const lens=new THREE.Mesh(new THREE.BoxGeometry(1.0,.026,.59),
+      new THREE.MeshLambertMaterial({color:0xf4faff,emissive:0xf1faff,emissiveIntensity:.85}));
+    lens.name='pub:kitchen:led-panel:'+(i+1);lens.position.set(x,3.79,z);group.add(lens);kitchenLenses.push(lens);
+    const light=new THREE.SpotLight(0xf3f8ff,24,6.4,1.17,.77,1.35);
+    light.name='pub:kitchen:task-light:'+(i+1);
+    light.position.set(x,3.72,z);light.target.position.set(x,0,z);
+    group.add(light,light.target);
+  }
+  text('Kitchen · cook / prep / wash / pass',-4.8,2.7,-8.1);
 
   add('toilet','Toilet and hand washing','pub-utilities','Stored cistern water, sanitary drain and warm hand basin.',5.6,-9.2);
-  add('kitchen','Working kitchen services','pub-utilities','Cooking, extraction, potable water and grease pre-treatment.',-4.6,-7.6);
+  add('kitchen','Working kitchen services','pub-utilities','Cooking, extraction, potable water and grease pre-treatment.',-5.52,-8.1);
   add('services','Utility meters and service diagram','pub-utilities','Inspect and test the pub connections.',-5.6,-6.5);
   // Physical hygiene / safety equipment. No claim of certified dimensions or capacity.
-  for(const [id,x,z] of [['kitchen',-6.75,-7.5],['wc',4.0,-10.0]]){
+  for(const [id,x,z] of [['kitchen',-6.75,-8.3],['wc',4.0,-10.0]]){
     box(.17,.24,.12,x,1.3,z,0xf2f0df).name='pub:'+id+'-soap';
     box(.28,.35,.14,x,1.65,z,0xeeeeea).name='pub:'+id+'-towels';
   }
-  solid(.65,.85,.65,-4.55,.425,-10.8,STEEL); // dedicated dishwasher
-  text('Dirty return → wash → clean rack',-4.6,1.6,-10.8);
+  text('Dirty return → dishwasher → clean rack',-4.6,1.6,-11.0);
   box(.4,.5,.12,-6.72,1.6,-6.0,0xd3332d).name='pub:fire-blanket';
   cyl(.11,.11,.55,-6.6,.8,-5.2,0xc62c28).name='pub:extinguisher';
   text('Fire blanket · extinguisher',-6.2,2.2,-6.0);
@@ -202,6 +276,7 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
     const state=pubUtilities(life),status=pubStatus(life),ops=pubStandards(life);
     fanSpeed+=((status.power?3:0)-fanSpeed)*Math.min(1,dt*2);if(status.power)fanSpeed=Math.min(3,fanSpeed);for(const fan of fans)fan.rotation.y+=fanSpeed*dt;
     const tv=group.getObjectByName('pub:television');if(tv)tv.visible=status.television;
+    const entry=group.getObjectByName('pub:cellar-entry-beacon'),cellar=life.civic.pubVenue.expansion;if(entry&&cellar){const alarm=cellar.gasAlarm||!cellar.monitorOk||!cellar.ventilation||!status.power||!pubConnected(life,'electricity','switchboard','cellar-vent');entry.material.color.setHex(alarm?0xe63b32:0x59af90);entry.material.emissive.setHex(alarm?0xe63b32:0x59af90);entry.material.emissiveIntensity=status.power||state.emergencyMinutes>0?.5:0;}
     const wc=doors.find(d=>d.name==='pub:wc-door');if(wc)wc.userData.privacy=ops.wcPrivacy;
     for(const [id,layer] of Object.entries(layers))layer.visible=state.overlay===id;
     // All ordinary electric fixtures follow this building's breaker as well as town supply.
@@ -213,13 +288,21 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
   add('heritage','Hotel history · original construction unknown','info',pubHistoryDescription(),6.25,2.6);
   add('counter', 'Bar', 'civic-ledger', 'Pull up a stool. Order a meal or a drink at the bar, or open the Town Ledger.', PUB_LAYOUT.staffUse.x, PUB_LAYOUT.staffUse.z);
   add('taps', 'Beer taps', 'info', 'Four taps and a fridge of bottles. Licensed hours run from eleven in the morning to late; the publican serves responsibly.', -2.4, -3.2);
-  add('menu', 'Menu board', 'info', 'Chicken parmi, the roast of the day and a pie with chips. The kitchen uses beef, chicken and vegies delivered from the farms and the butcher.', -6.3, 3.0);
+  add('menu', 'Menu board', 'info', 'Chicken parmi, the roast of the day and a pie with chips. The kitchen uses beef, chicken and vegies delivered from the farms and the butcher.', -6.3, -5.8);
   add('lounge','Bistro and electric hearth','info','Eight four-place tables, seven bar stools and a clear central access aisle. Decorative electric hearth; no solid-fuel fire.',0,-2.5);
   add('pool','Play pool','pub-pool','Two-player physics pool: aim, shot power, cushions, pockets and house-rule fouls.',2.5,-.8);
   add('keno','Keno terminal','pub-keno','Free numbers demonstration; no stakes, prizes or real operator.',5.6,-3.6);
   addPubPlant(k,site);
+  addPubVerticalCore(k,0);
   const servicePresentation=installPubPresentation(k);
-  const interior = k.finish({ doors, sight, utilityVisuals, staff: { pos: PUB_LAYOUT.staff, use: PUB_LAYOUT.staffUse } });
+  const interior = k.finish({lightingOptions:{positions:[[-2,-3],[3.5,1.5],[-3.5,-6.5],[3.5,-6.5]]}, doors, sight, utilityVisuals, staff: { pos: PUB_LAYOUT.staff, use: PUB_LAYOUT.staffUse } });
+  // k.finish installs the shared lighting circuit. Wrap it to switch the kitchen
+  // diffusers too: an unpowered kitchen must not show glowing ceiling panels.
+  const poweredLighting=group.userData.updateLighting;
+  group.userData.updateLighting=powered=>{
+    poweredLighting?.(powered);
+    for(const lens of kitchenLenses)lens.material.emissiveIntensity=powered ? .85 : 0;
+  };
   interior.attachPubStaff=servicePresentation.attach;interior.afterPeople=servicePresentation.update;
   interior.physicalPlan=PUB_PHYSICAL_PLAN_2026;
   interior.fireEgressDesign=pubExitLayout();
@@ -233,7 +316,7 @@ export function buildPubInterior(site, makeLabel, roomTitle = 'Country pub') {
     throw new Error('Pub interior dimensions disagree with the external building');
   interior.buildingEnvelope=envelope;
   interior.storey=0;
-  interior.storeyCount=envelope.modelledStoreys;
+  interior.storeyCount=envelope.accessibleLevels;
 
   interior.rooms.push({name:'Kitchen',x0:-6.9,x1:-3.96,z0:-11.9,z1:-6.96,w:2.94,d:4.94,parent:0});
   interior.rooms.push({name:'Sanitary compartment',x0:3.86,x1:6.9,z0:-11.9,z1:-8.16,w:3.04,d:3.74,parent:0});
