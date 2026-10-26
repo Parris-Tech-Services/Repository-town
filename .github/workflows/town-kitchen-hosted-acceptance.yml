@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - 'release.json'
+      - '.github/workflows/town-kitchen-hosted-acceptance.yml'
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,7 +19,7 @@ jobs:
       - name: Confirm public mirror carries the kitchen release
         id: identity
         env:
-          EXPECTED_KITCHEN_COMMIT: fad613dc56f47860b4f53bf6df95c74a3e674eaf
+          EXPECTED_KITCHEN_COMMIT: edec5d2dcad648cef1cc2e260022e35327b0e4f0
         run: |
           set -euo pipefail
           endpoint="https://parris-tech-services.github.io/Repository-town/release.json?v=$GITHUB_SHA"
