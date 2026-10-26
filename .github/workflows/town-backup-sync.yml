@@ -142,3 +142,4 @@ jobs:
 
 # Publish the canonical pub ID discoverability fix after source PR #220 is merged.
 # Source release request 2026-10-26: merged kitchen movement, work lighting and actual touch-joystick QA at fad613dc56f47860b4f53bf6df95c74a3e674eaf.
+# Retry gated kitchen-release mirror with the latest Pages QA workflow included (2026-10-26).
