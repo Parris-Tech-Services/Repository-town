@@ -3,7 +3,7 @@
 export const EXPANSION_SITES=Object.freeze([
   {
     "id": "library",
-    "name": "Sir Reginald Repo Public Library",
+    "name": "The Old Shire Library",
     "col": "A",
     "row": 7,
     "side": "north",
@@ -37,7 +37,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "repotech",
-    "name": "RepoTech Computers & Communications",
+    "name": "Copperline Computers",
     "col": "C",
     "row": 7,
     "side": "north",
@@ -71,7 +71,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "dentist",
-    "name": "Repository Dental",
+    "name": "Wattle Street Dental",
     "col": "E",
     "row": 7,
     "side": "north",
@@ -88,7 +88,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "supermarket",
-    "name": "Repository Fresh Supermarket",
+    "name": "The Corner Grocer",
     "col": "F",
     "row": 7,
     "side": "north",
@@ -105,7 +105,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "physio",
-    "name": "Repository Physiotherapy",
+    "name": "Ironbark Physio",
     "col": "G",
     "row": 7,
     "side": "north",
@@ -122,7 +122,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "pathology",
-    "name": "Regional Pathology Collection",
+    "name": "Riverbend Pathology",
     "col": "H",
     "row": 7,
     "side": "north",
@@ -130,7 +130,7 @@ export const EXPANSION_SITES=Object.freeze([
     "style": "health",
     "priority": "P1",
     "staffRole": "pathology collector",
-    "description": "Pathology specimen collection",
+    "description": "Private pathology collection rooms, waiting and specimen dispatch",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
@@ -156,7 +156,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "optometry",
-    "name": "Repository Eyecare",
+    "name": "Clearview Optometrists",
     "col": "J",
     "row": 7,
     "side": "north",
@@ -190,7 +190,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "gym",
-    "name": "Repository Fitness",
+    "name": "The Yard Fitness",
     "col": "L",
     "row": 7,
     "side": "north",
@@ -496,7 +496,7 @@ export const EXPANSION_SITES=Object.freeze([
   },
   {
     "id": "clothing",
-    "name": "Creative Court Clothing & Footwear",
+    "name": "Gumleaf Outfitters",
     "col": "A",
     "row": 6,
     "side": "north",
@@ -504,7 +504,7 @@ export const EXPANSION_SITES=Object.freeze([
     "style": "retail",
     "priority": "P2",
     "staffRole": "retail assistant",
-    "description": "Regional clothing and shoes",
+    "description": "Country clothing, footwear, fitting rooms and workwear",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
@@ -1167,11 +1167,11 @@ export const EXPANSION_SITES=Object.freeze([
     "style": "park",
     "priority": "P2",
     "staffRole": "bus liaison",
-    "description": "Transport stop and shelter",
+    "description": "Sheltered community bus stop with one boarding point, passenger information and step-free waiting area",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
-    "constructionStage": "2026 massing shell; interior detail pending",
+    "constructionStage": "2026 modelled shelter and passenger waiting area; bus operations and regulatory approvals unverified",
     "taskId": "RTBUILD-069"
   },
   {
@@ -1184,11 +1184,11 @@ export const EXPANSION_SITES=Object.freeze([
     "style": "heritage",
     "priority": "P2",
     "staffRole": "visitor officer",
-    "description": "Local tourism information",
+    "description": "Regional visitor information, local maps, guides and gifts with a verandah waiting room",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
-    "constructionStage": "2026 massing shell; interior detail pending",
+    "constructionStage": "2026 researched model of regional visitor information; real-world compliance and bookings unverified",
     "taskId": "RTBUILD-070"
   },
   {
