@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { containLabel } from '../ui/labels.js';
 import { Builder } from './builder.js';
-import { PROPS } from './props.js';
+import { PROPS, standTop, PORTABLE } from './props.js';
 import { seatForProp } from './seats.js';
 import { SILL, HEAD, glassMesh, spreadWindows } from './windows.js';
 
@@ -231,8 +231,11 @@ function buildOnce(house, makeLabel, attempt) {
   });
   // A villager's own home (house.household = their name) also gets the rooms they live in:
   // the appliances here are the ones src/world/household.js runs, and using them opens that household.
-  if(house.household && !house.memorial&&!house.heritage){
-    const use=(what)=>({do:'household',what});
+  if((house.household||house.careHousehold) && !house.memorial&&!house.heritage){
+    const use=what=>house.careHousehold?
+      {do:'info',title:'Care staff shared house · '+what,
+       text:'A fictional domestic '+what+' for off-duty aged-care employees, not a workplace or resident-care room.'}:
+      {do:'household',what};
     const have=new Set(authored.rooms.map(r=>r.name));
     const add=(name,w,d,props)=>{ if(!have.has(name))roomsWithBeds.push({name,w,d,archive:true,household:true,props}); };
     add('Kitchen',10,8,[['fridge','Fridge',use('fridge')],['pantry','Pantry',use('pantry')],['stove','Oven and cooktop',use('oven')],
@@ -241,6 +244,15 @@ function buildOnce(house, makeLabel, attempt) {
       ['washingMachine','Washing machine',use('laundry')],['freezer','Chest freezer',use('freezer')],['switchboard','Switchboard',use('power')]]);
     add('Living room',10,9,[['sofa','Couch'],['tv','Television',use('tv')],['aircon','Air conditioner',use('climate')],
       ['computer','Home computer',use('computer')],['lamp','Reading lamp']]);
+    if(house.careHousehold){
+      for(let i=0;i<house.careWorkers.length;i++){
+        const person=house.careWorkers[i];
+        add('Care-worker bedroom '+(i+1),8,8,[
+          ['bed','Private bed for '+person.name,{do:'info',title:person.name+' · private bedroom',
+            text:'Fictional '+person.job+' living in this southside share house. This is a place for rest between shifts.'}],
+          ['wardrobe','Scrubs, uniforms and personal clothing'],['lamp','Bedside light']]);
+      }
+    }
   }
   const spec={...authored,rooms:roomsWithBeds};
   const b = new Builder();
@@ -257,6 +269,7 @@ function buildOnce(house, makeLabel, attempt) {
   b.box(0xb9b2a4, 3, 0.1, 1.6, ex, -0.05, rooms[0].z1 + 0.8);
 
   const group = new THREE.Group();
+  const portables = [];
   const doors = [];
   const labels = [];
   rooms.forEach((r, i) => {
@@ -310,10 +323,19 @@ function buildOnce(house, makeLabel, attempt) {
         placedProps.push({ type, room: ri });
         return;
       }
+      // Small loose things (no special action) are their own mesh so they can be picked up and moved.
+      if (PORTABLE.has(type) && !key) {
+        const pb = new Builder(); pb.at(0, 0, 0, 0, () => prop.build(pb, { c: act?.c, a: act?.a }));
+        const mesh = pb.build(); mesh.position.set(spot.x, 0, spot.z); mesh.rotation.y = spot.rot; mesh.name = 'carry:' + type;
+        portables.push(mesh);
+        interactables.push({ key: `carry:${house.coordinate}:${ri}:${pi}`, type, label: label || prop.label, act: { do: 'pickup' }, room: ri, pos: mesh.position, roomName: r.name, mesh });
+        placedProps.push({ type, room: ri });
+        return;
+      }
       b.at(spot.x, 0, spot.z, spot.rot, () => prop.build(b, { c: act?.c, a: act?.a, key }));
       const sideways = Math.abs(Math.sin(spot.rot)) > 0.5;
       const fw = sideways ? prop.d : prop.w, fd = sideways ? prop.w : prop.d;
-      if (prop.solid) colliders.push({ x0: spot.x - fw / 2, x1: spot.x + fw / 2, z0: spot.z - fd / 2, z1: spot.z + fd / 2 });
+      if (prop.solid) colliders.push({ x0: spot.x - fw / 2, x1: spot.x + fw / 2, z0: spot.z - fd / 2, z1: spot.z + fd / 2, top: standTop(type) });
       placedProps.push({ type, room: ri });
       sceneObjects.push({ type, label: label || prop.label, room: ri, pos: { x: spot.x, z: spot.z }, interactive: !!key });
       const pos = new THREE.Vector3(spot.x, 0, spot.z);
@@ -373,6 +395,7 @@ function buildOnce(house, makeLabel, attempt) {
 
   const built = b.build();
   group.add(built, light);
+  for (const m of portables) group.add(m);
   const glass = glassMesh(panes); if (glass) group.add(glass);
 
   // Contain the whole billboard within its room. Never turn off depth testing:

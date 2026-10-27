@@ -22,7 +22,7 @@ import { loadSave, writeSave, clearSave } from './engine/save.js';
 import { discoveryProgress } from './ui/discovery-log.js';
 import { buildTown, streetSigns, lotPosition } from './world/town.js';
 import { buildYeovalInterior } from './world/yeoval-interior.js';
-import { buildMasterplan } from './world/masterplan-built.js';
+import { buildMasterplan, PLAN_HOMES } from './world/masterplan-built.js';
 import { buildCountryInterior,countryEntrance,countryExitPose } from './world/country-interiors.js';
 import { CORE_ROADS } from './world/masterplan-model.js';
 import { RAIL_Z } from './world/rail-corridor.js';
@@ -30,6 +30,8 @@ import { createTownMap } from './ui/town-map.js';
 import { createCheatMenu } from './ui/cheat-menu.js';
 import { summonCar, claimProperty, nearestPropertyKey, planTitleKey, addMoney, refreshNeeds, fixAllCars, setClock } from './world/cheats.js';
 import { buildBrackenInterior } from './world/bracken-interior.js';
+import {populateCareCampus} from './world/aged-care-population.js';
+import {CARE_FACILITIES,careStaff,careResidents,careOnDuty,careDailyMetrics,assignCareHousing} from './world/aged-care-operations.js';
 import { houseAddress, parseTownAddress, placeAddress } from './world/addresses.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { honourPaulRoe } from './world/paul-roe-tribute.js';
@@ -57,12 +59,16 @@ import { sceneFromRoom } from './ui/scene-awareness.js';
 import { mountNPCChat } from './ui/npc-chat.js';
 import { mountTownYarns } from './ui/yarns.js';
 import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
+import {makeDistinctPerson} from './world/npc-wardrobe.js';
 import { separatePedestrians, steerPedestrians } from './world/pedestrian-spacing.js';
 import { createTownLife } from './world/townlife.js';
 import { createEmergencyResponseVisuals } from './world/emergency-response-visuals.js';
 import { createPlayerDriving } from './world/player-driving.js';
 import { createDrivingDashboard } from './ui/driving-dashboard.js';
 import { buildRoadSigns } from './world/road-signs.js';
+import { buildFarmersMarket, stallPanel, buyAtStall, marketNotice } from './world/farmers-market.js';
+import { addItem, equip, toggleTorch, torchLit, equippedType } from './world/inventory.js';
+import { inventoryPanel } from './ui/inventory-panel.js';
 import { buildCivilWorks } from './world/civil-works.js';
 import { nearestSeat } from './world/seats.js';
 import { furniturePanel } from './ui/furniture.js';
@@ -156,6 +162,11 @@ async function start() {
   // Town life: farms, shops, trucks and 32 villagers with jobs and meals (src/world/life.js).
   const townLife = createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog });
   const life = townLife.life;
+  // Real existing southern house interiors become ordinary share-homes for fictional
+  // care employees. Leave all established villager homes and save IDs untouched.
+  const careWorkerList=[...careStaff('bracken-house'),...careStaff('yeoval-aged-care')].sort((a,b)=>a.staffRoleIndex-b.staffRoleIndex||a.role.localeCompare(b.role)||a.facility.localeCompare(b.facility));
+  const careHousing=assignCareHousing(careWorkerList,town.lots.keys(),new Set(life.villagers.map(v=>v.home.coordinate)));
+  const careHouse=coordinate=>careHousing.houses.get(coordinate)||null;
   initialiseElectricalPilot(life);
   const pilotVisuals=createElectricalPilotVisuals(town.group,life);
   const emergencyVisuals = createEmergencyResponseVisuals(life, town);
@@ -175,6 +186,25 @@ async function start() {
   // NSW regulatory signs from the road network (src/world/road-signs.js): GIVE WAY/STOP, 50 km/h,
   // 40 km/h along the High Street shops and a school zone outside the school.
   const highStreetShops = [...life.places.values()].filter((p) => p.door && Math.abs(p.door.z - 177) < 12);
+  // Farmers' market in Market Square on the 1st and 3rd Saturday mornings (farmers-market.js).
+  const market = buildFarmersMarket(town.group, { x: life.place('square').x, z: 7 * 46 - 3.5 * 46 });
+  // Torch: a spot light carried on the camera, lit when the player holds the torch and switches it
+  // on (world/inventory.js); a small torch shows in the bottom corner of the view while held.
+  const torchLight = new THREE.SpotLight(0xfff3dc, 0, 34, 0.36, 0.55, 1.2);
+  torchLight.position.set(0.25, -0.25, 0); torchLight.target.position.set(0, -0.8, -8); torchLight.castShadow = false;
+  camera.add(torchLight, torchLight.target);
+  const handTorch = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.26, 10), new THREE.MeshLambertMaterial({ color: 0x2b2f36, emissive: 0x111111 }));
+  handTorch.rotation.x = Math.PI / 2 - 0.2; handTorch.position.set(0.3, -0.28, -0.55); handTorch.visible = false; camera.add(handTorch);
+  // A torch to find at the Town Guide kiosk, where every game starts.
+  const kioskTorch = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.3, 10), new THREE.MeshLambertMaterial({ color: 0xd9a400 }));
+  kioskTorch.rotation.z = Math.PI / 2; kioskTorch.position.set(town.guidePos.x + 1.4, 0.06, town.guidePos.z + 0.7); town.group.add(kioskTorch);
+  const itemSpots = [{ key: 'item:guide-torch', item: 'torch', found: 'foundGuideTorch', mesh: kioskTorch, pos: kioskTorch.position, label: '🔦 Pick up the torch' }];
+  function frameItems() {
+    const me = life.civic.player;
+    for (const it of itemSpots) it.mesh.visible = !me[it.found];
+    torchLight.intensity = torchLit(me) ? 75 : 0; torchLight.visible = torchLight.intensity > 0;
+    handTorch.visible = equippedType(me) === 'torch';
+  }
   const civilWorks = buildCivilWorks(town.group);   // estate services from the planning audit
   const roadSigns = buildRoadSigns(town.group, {
     highStreet: highStreetShops.length ? { z: 177, x0: Math.min(...highStreetShops.map((p) => p.x)) - 20, x1: Math.max(...highStreetShops.map((p) => p.x)) + 20 } : null,
@@ -195,7 +225,7 @@ async function start() {
     { x0: -1495, x1: 595, z0: -395, z1: -390 }, { x0: -1495, x1: 595, z0: 555, z1: 560 },
     { x0: -1495, x1: -1490, z0: -395, z1: 560 }, { x0: 590, x1: 595, z0: -395, z1: 560 },
   ];
-  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...masterplan.colliders, ...civilWorks.colliders, ...edges]);
+  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...masterplan.colliders, ...civilWorks.colliders, ...market.colliders, ...edges]);
   // Dynamic vehicle footprints block player motion as well as truck movement.
   // A vehicle is approx 2.2m wide and 6.6m long; use a conservative
   // rotated-axis AABB for the town's existing 2D collision engine.
@@ -347,6 +377,15 @@ async function start() {
     const name = life.place(id).name;
     status(`Outside ${life.place(id).address} · ${/^the /i.test(name) ? '' : 'the '}${name}.`);
   }
+  // Country homes in the new neighbourhood: stand on the front path, facing the door.
+  function goCountryHome(h) {
+    if(driving.driving){status('Park and get out before fast travel.');return;}
+    closePanel(); npcChat.close();
+    if (mode === 'house') leave(false);
+    player.place(h.x, h.facesNorth ? h.frontZ - 3 : h.frontZ + 3, h.facesNorth ? Math.PI : 0);
+    input.pressed.delete('map'); setOverview(false);
+    status(`Outside ${h.address} · the ${h.country} house (${h.tradition}).`);
+  }
   function updateFloorBadge() {
     floorBadge.hidden = !inside?.floors;
     if(inside?.floors?.isPub){floorBadge.textContent=inside.floors.titles[inside.floorIndex].split(' · ')[0]+' · Floors';return;}
@@ -396,13 +435,42 @@ async function start() {
     // A villager's own home also has their kitchen, bathroom and laundry, and living room.
     const resident = life.villagers.find((v) => v.home.coordinate === coord);
     const base = byCoord.get(coord);
+    const careHousemates=careHouse(coord);
     // Memorial buildings are public galleries, not a randomly assigned NPC home.
     // Never append generic kitchen, bathroom/laundry or living room overlays.
     const family=life.householdMembers(coord);
-    const h=resident && !base.memorial&&!base.heritage?{...base,household:resident.name,
+    const h=careHousemates && !base.memorial?{...base,
+      name:'Care workers’ share house',careHousehold:true,
+      careWorkers:careHousemates,careRosterDate:life.dateLabel(),
+      householdResidents:careHousemates,marriedCouple:false}:
+      resident && !base.memorial&&!base.heritage?{...base,household:resident.name,
       householdResidents:family.residents,marriedCouple:family.sharedDoubleBed}:base;
     const floors = h.memorial ? null : createFloorStack(h, makeLabel);
     const built = floors ? floors.levels[0] : buildInterior(h, makeLabel);
+    if(careHousemates){
+      const people=careHousemates.map(w=>w.name+' · '+w.job+' ('+CARE_FACILITIES[w.facility].name+')').join('; ');
+      const p=built.spawn.clone();p.z-=1.4;
+      built.interactables.push({key:'care-house:'+coord,type:'civic',label:'Care staff share-house roster',
+        room:0,roomName:'Shared staff accommodation',pos:p,
+        act:{do:'info',title:'Care workers living at '+coord,
+          text:'This is a fictional shared home, with a kitchen, sleeping rooms, bathroom, laundry and off-duty living area. Residents: '+people+'. No real UPA employee names or residential addresses are represented.'}});
+      const plaque=makeLabel('CARE STAFF SHARE HOUSE · '+careHousemates.length+' housemates','interactive');
+      plaque.position.set(p.x,2.32,p.z);built.group.add(plaque);
+      const offDuty=careHousemates.filter(w=>!careOnDuty(w.facility,life.day,life.minute).some(o=>o.id===w.id));
+      const roomIndex=Math.max(0,built.rooms.findIndex(room=>room.name==='Living room'));
+      const living=built.rooms[roomIndex];
+      for(let i=0;i<offDuty.length;i++){
+        const worker=offDuty[i];
+        const pos=new THREE.Vector3((living.x0+living.x1)/2+(i-.5)*.9,0,(living.z0+living.z1)/2+(i%2)*.5);
+        const key='care-share:'+coord+':'+worker.id;
+        const act={do:'npc',name:worker.name,role:worker.job,id:worker.id,isCareStaff:true};
+        built.walkers.push({key,act,room:roomIndex,pos,label:worker.name+' · '+worker.job});
+        built.interactables.push({key,type:'npc',label:'Speak with '+worker.name,
+          person:true,act,room:roomIndex,roomName:living.name,pos});
+        built.sceneObjects.push({type:'person',label:worker.name,room:roomIndex,
+          pos:{x:pos.x,z:pos.z},interactive:true});
+      }
+    }
     attachPilotInteriorLighting(built.group,'H:'+coord);
     // Every storey shares the ground floor's frame: front door at the interior's exit, facing +z
     // like the house itself, so the windows look out on the real street (src/world/windows.js).
@@ -417,7 +485,8 @@ async function start() {
     const kitchens = [...new Set(built.placedProps.filter((p) => ['stove', 'fridge', 'pantry', 'coffeeMachine'].includes(p.type)).map((p) => p.room))];
     inside.people = built.walkers.map((w, i) => {
       freeSpot(w.pos, world);
-      const walker = new Walker(makePerson(coord.charCodeAt(0) + i * 7, w.act.c ?? 0x3f6fb5, w.act.a ?? 0x2f3440), w.pos, { speed: 0.9, name: w.act.name });
+      const model=w.act?.isCareStaff?makeDistinctPerson('care-employee:'+w.act.id):makePerson(coord.charCodeAt(0) + i * 7, w.act.c ?? 0x3f6fb5, w.act.a ?? 0x2f3440);
+      const walker = new Walker(model, w.pos, { speed: 0.9, name: w.act.name });
       if (w.label) { const s = makeLabel(w.act.name || w.label, 'interactive'); s.position.set(0, 2.25, 0); s.userData.labelKind = 'interactive'; walker.group.add(s); walker.tag = s; }
       walker.room = w.room; walker.activity = 'pottering about';
       const interactable = built.interactables.find((x) => x.key === w.key);
@@ -461,7 +530,7 @@ async function start() {
     mode='house';player.baseHeight=0;updateFloorBadge();$('btn-exit').hidden=false;
     closePanel();npcChat.close();ambience.door();
     $('card').hidden=true;delete $('card').dataset.coord;
-    status('Inside '+home.country+' · '+home.tradition+'. Ground floor includes a bedroom, bathroom, kitchen and living area. Upper levels are not yet accessible; this is not an approved building design.');
+    status(built.dossier?'Inside a '+built.dossier.house+' ('+built.dossier.era+'). Walk up to the residents to meet them.':'Inside '+home.country+' · '+home.tradition+'. Ground floor includes a bedroom, bathroom, kitchen and living area. Upper levels are not yet accessible; this is not an approved building design.');
     return true;
   }
   function enterCampus(id, keepFacing=false) {
@@ -470,8 +539,9 @@ async function start() {
     if(!site)return false;
     const yawIn=player.yaw;
     const built=site.id==='bracken-house'?buildBrackenInterior(makeLabel):buildYeovalInterior(makeLabel);
+    const carePeople=populateCareCampus(site.id,built,life,makeLabel);
     inside={house:{coordinate:site.id==='bracken-house'?'BRACKEN':'YEOVAL',name:site.name,kind:'care'},campus:site,
-      ...built,people:[],floorIndex:0,floors:null};
+      ...built,people:carePeople,floorIndex:0,floors:null};
     scene.add(built.group);town.group.visible=false;
     scene.background.set(INDOOR);scene.fog=null;
     world=new CollisionWorld(built.colliders);
@@ -479,7 +549,7 @@ async function start() {
     mode='house';player.baseHeight=0;updateFloorBadge();$('btn-exit').hidden=false;
     closePanel();npcChat.close();ambience.door();
     $('card').hidden=true;delete $('card').dataset.coord;
-    status('Inside '+site.name+'. This is an illustrative public-reference layout, not a surveyed floor plan. Return via the public entrance.');
+    status('Inside '+site.name+'. Fictional '+careResidents(site.id).length+' residents and live shifts of nurses, carers, catering and support staff. Consult the care team noticeboard. This is not a real resident floor plan.');
     return true;
   }
   let lastDeniedEntrance = '', lastDeniedTime = 0;
@@ -527,6 +597,7 @@ async function start() {
   }
   function leave(placeOutside = true, keepFacing = false, via = 'front') {
     if (!inside) return;
+    if (carried) { inside.interactables?.push(carried); carried = null; }   // the object stays in the house
     const yawInside = player.yaw;
     closePanel(); npcChat.close();
     const coord = inside.house.coordinate;
@@ -597,6 +668,8 @@ async function start() {
   const placeLabel = (p) => `${p.name} · ${p.address}`;
   const places = [...life.places.values()].filter((p) => p.col);
   for (const p of places) { const o = document.createElement('option'); o.value = placeLabel(p); list.append(o); }
+  const homeLabel = (h) => `${h.country} · ${h.address}`;
+  for (const h of PLAN_HOMES) { const o = document.createElement('option'); o.value = homeLabel(h); list.append(o); }
   $('search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = $('search').value.trim().toLowerCase(); if (!q) return;
@@ -608,7 +681,10 @@ async function start() {
     const h = !p && (byCoord.get(code) || (addressed && addressed.side==='S' && byCoord.get(addressed.col+addressed.row)) || houses.find((h) => lower(h.name) === q || lower(h.address) === q || lower(`${h.address} · ${h.name}`) === q || lower(`${h.coordinate} · ${h.name}`) === q));
     const near = !p && !h && places.find((p) => lower(p.name).includes(q));
     const named = !p && !h && !near && houses.find((h) => lower(h.name).includes(q));
-    if (p || near) { goPlace((p || near).id); $('search').blur(); }
+    const homeQ = q.split(' · ')[0];
+    const home = !p && !h && (PLAN_HOMES.find((x) => lower(homeLabel(x)) === q || lower(x.country) === homeQ || lower(x.address) === q) || (!near && !named && homeQ.length >= 3 && PLAN_HOMES.find((x) => lower(x.country).startsWith(homeQ))));
+    if (home) { goCountryHome(home); $('search').blur(); }
+    else if (p || near) { goPlace((p || near).id); $('search').blur(); }
     else if (h || named) { travel((h || named).coordinate); $('search').blur(); }
     else status(`No building matches "${$('search').value}".`);
   });
@@ -646,6 +722,16 @@ async function start() {
     onOpen: () => { input.reset(); closePanel(); },
   });
   $('btn-townmap').onclick = () => townMap.open();
+  const openBag = () => openPanel(inventoryPanel(life.civic.player, { carried: carried?.label || null }), guideSpot);
+  $('btn-bag').onclick = openBag;
+  // Captured before the input handler: F is also a "use" key, so while the torch is in hand it
+  // switches the torch instead (otherwise F keeps working as use).
+  addEventListener('keydown', (e) => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.target?.closest?.('input,textarea,select,[contenteditable]')) return;
+    const k = String(e.key ?? '').toLowerCase();
+    if (k === 'i') { e.preventDefault(); if (panelOpen) closePanel(); else openBag(); }
+    if (k === 'f' && equippedType(life.civic.player) === 'torch') { e.preventDefault(); e.stopImmediatePropagation(); status(toggleTorch(life.civic.player)); }
+  }, { capture: true });
   // Hidden playtest cheat menu (src/ui/cheat-menu.js): five taps on the HUD title or ` three times.
   const toTown = () => { if (driving.driving) return 'Park and get out first.'; if (mode === 'house') leave(false); return null; };
   const teleport = (x, z, yaw, where) => { const busy = toTown(); if (busy) return { message: busy }; player.place(x, z, yaw); return { message: 'Teleported to ' + where + '.' }; };
@@ -677,6 +763,9 @@ async function start() {
       goWork: () => teleport(456, 300, Math.PI, 'Saleyards Road and the employment lots'),
       goHigh: () => teleport(0, 173.6, 0, 'the High Street'),
       goGuide: () => { const busy = toTown(); if (busy) return { message: busy }; player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return { message: 'Teleported to the Town Guide.' }; },
+      // Big jump: launch speed for the chosen height (v = sqrt(2 g h), g = 22 m/s² in this game).
+      jump: (h) => { const m = Number(h) || 0; player.jumpSpeed = m > 0 ? Math.sqrt(2 * 22 * m) : 7.2; return { message: m > 0 ? `Jump height ${m} m. Press jump (space or ⤒) and land on furniture or roofs.` : 'Normal jump restored.' }; },
+      torch: () => { const me = life.civic.player; const id = addItem(me, 'torch'); equip(me, id); me.torchOn = true; return { message: 'A torch, switched on. F toggles it; 🎒 Bag to put it away.' }; },
       money: () => addMoney(life, 10000),
       needs: () => refreshNeeds(life),
       buyNear: () => { const key = nearestPropertyKey(life, player.pos.x, player.pos.z, propertyPositions()); return key ? claimProperty(life, key) : { message: 'No property nearby.' }; },
@@ -698,9 +787,9 @@ async function start() {
   const TIMES = [[7 * 60, '🌅 Morning'], [12 * 60, '☀️ Midday'], [18 * 60 + 40, '🌇 Dusk'], [22 * 60, '🌙 Night']];
   function cycleTime() {
     const next = TIMES.find(([m]) => m > life.minute + 1) || TIMES[0];
-    if (next[0] < life.minute) { life.day++; life.newDay(); }
-    life.minute = next[0];
-    status(`${next[1]} — the town clock now reads ${life.time()}.`);
+    if (next[0] < life.minute) { life.day++;life.minute=next[0];life.newDay(); }
+    else life.minute=next[0];
+    status(`${next[1]} — ${life.dateLabel()}, ${life.time()} (Day ${life.day}).`);
   }
   const syncTimeBtn = () => { const h = life.minute / 60; const label = h < 6 || h >= 20.5 ? '🌙 Night' : h < 9 ? '🌅 Morning' : h < 17.5 ? '☀️ Day' : '🌇 Dusk'; if ($('btn-time').textContent !== label) $('btn-time').textContent = label; };
   $('btn-time').onclick = () => cycleTime();
@@ -914,7 +1003,31 @@ async function start() {
   // Relics, street characters, villagers, the guide and shop counters can stand close
   // together, so Use goes to whichever is nearest; everything stays reachable.
   const away = (p) => (p ? Math.hypot(player.pos.x - p.pos.x, player.pos.z - p.pos.z) : Infinity);
+  // Carrying a small object picked up indoors: it floats in front of the player each frame
+  // (carryFrame) and is put down where they face, on the floor or on a table top.
+  let carried = null;
+  function pickUp(thing) {
+    if (carried) return;
+    const list = inside?.interactables, i = list ? list.indexOf(thing) : -1;
+    if (i >= 0) list.splice(i, 1);
+    carried = thing; status(`Carrying the ${thing.label.toLowerCase()}. Press use (E or ✋) to put it down where you are facing.`);
+  }
+  function putDown() {
+    const f = player.forward(), x = player.pos.x + f.x * 0.85, z = player.pos.z + f.z * 0.85;
+    if (world.hits(x, z, 0.18, player.y + 1.2)) { status('No room to put it down there. Face a clear spot.'); return; }
+    const y = world.groundAt ? world.groundAt(x, z, 0.3, player.y + 1.2) : 0;
+    carried.mesh.position.set(x, y, z); carried.mesh.rotation.y = player.yaw;
+    inside?.interactables?.push(carried);
+    status(`Put the ${carried.label.toLowerCase()} down${y > 0.05 ? ' on top' : ''}.`); carried = null;
+  }
+  function carryFrame() {
+    if (!carried) return;
+    const f = player.forward();
+    carried.mesh.position.set(player.pos.x + f.x * 0.75, player.y + player.eye - 0.75, player.pos.z + f.z * 0.75);
+    carried.mesh.rotation.y = player.yaw;
+  }
   function use() {
+    if (carried) { putDown(); return; }
     if(driving.driving){status(driving.exit());return;}
     if(mode==='town'&&nearCar){status(driving.enter(nearCar));return;}
     if(player.seated){
@@ -930,6 +1043,13 @@ async function start() {
       const treasure = expedition.nearby(player.pos), treasureD = away(treasure), npcD = away(nearNPC), personD = away(nearPerson);
       if (treasure && treasureD <= npcD && treasureD <= personD) { expedition.use(player.pos); ambience.relic(); return; }
       if (nearNPC && npcD <= personD) { input.releaseMouse(); closePanel(); $('npc-roster').hidden = true; npcChat.show(nearNPC.npc, null); input.reset(); return; }
+      if (nearPerson?.spot?.item) {
+        const me = life.civic.player, sp = nearPerson.spot; me[sp.found] = true;
+        const id = addItem(me, sp.item); if (!equippedType(me)) equip(me, id);
+        status('You pick up a torch and hold it. Press F (or open 🎒 Bag) to switch it on.'); return;
+      }
+      if (nearPerson?.spot?.market) { openPanel(stallPanel(life, nearPerson.spot.market, (id, i) => buyAtStall(life, id, i)), guideSpot); return; }
+      if (nearPerson?.spot?.id === 'square') { openPanel(marketNotice(life.day, life.minute), guideSpot); return; }   // an open square, not a building
       if (nearPerson) { if(nearPerson.spot){enterShop(nearPerson.spot.id);return;} talkTo(nearPerson); return; }
       if (nearHouse) showCard(nearHouse.house);
       return;
@@ -941,6 +1061,8 @@ async function start() {
         else status('Move closer to the seat to sit safely.');
         return;
       }
+      if(nearThing.act?.do==='pickup'){ pickUp(nearThing); return; }
+      if(nearThing.act?.do==='dossier'){ openPanel(nearThing.act.panel,nearThing); return; }
       if(nearThing.act?.do==='furniture'){
         openPanel(furniturePanel(nearThing),nearThing);
         return;
@@ -1220,10 +1342,13 @@ async function start() {
     else {
       const n=life.needsReport();
       player.speedFactor=movementSpeedFactor(movementSpeed,n.hunger,n.fatigue);
-      if(mode==='town'&&driving.driving) driving.update(dt);
+      if(mode==='town'&&driving.driving){ driving.update(dt); if(driving.message){ status(driving.message); driving.clearMessage(); } }
       else player.update(dt,input,world);
     }
     drivingDashboard.update(mode==='town'&&!overview?driving.activeVehicle():null);
+    market.update(life.day, life.minute);
+    frameItems();
+    carryFrame();
     // Keep the table-service control in the always-visible needs strip on
     // phones with the rest of the HUD collapsed.
     tableOrder.hidden=!(player.seated && mode==='house' &&
@@ -1251,7 +1376,10 @@ async function start() {
     const car=driving.activeVehicle();
     const needsText=`🍽 ${Math.round(n.hunger)}% · 💤 ${Math.round(n.fatigue)}%${car?' · 🚗 '+Math.round(Math.abs(car.speed||0)*3.6)+'km/h ⛽ '+Math.round(car.fuel||0)+'L':''}`;
     if($('needs-status').textContent!==needsText)$('needs-status').textContent=needsText;
-    const clockText = `🕖 ${life.time()} · Day ${life.day}${life.speed > 1 ? ` · ${life.speed}×` : ''}`;
+    const civil=life.calendar();
+    const monthShort=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][civil.month-1];
+    const clockText = `${civil.weekdayName.slice(0,3)} ${civil.dayOfMonth} ${monthShort} · ${life.time()} · Day ${life.day}${life.speed > 1 ? ` · ${life.speed}×` : ''}`;
+    $('clock').title=life.dateLabel()+' — Day '+life.day;
     if ($('clock').textContent !== clockText) $('clock').textContent = clockText;
     syncTimeBtn();
     {
@@ -1329,6 +1457,8 @@ async function start() {
       consider(guideSpot, 2.6);
       // A shop door you are facing wins over a villager walking past or queuing beside it.
       for (const sp of townLife.spots) consider({ ...sp, spot: sp }, 3.2, 1.5);
+      if (market.root.visible) for (const sp of market.spots) consider({ ...sp, spot: sp }, 3.6, 2.0);
+      for (const sp of itemSpots) if (!life.civic.player[sp.found]) consider({ ...sp, spot: sp }, 2.6, 2.0);
       nearTownSeat = !overview&&!driving.driving ? nearestSeat(townLife.seats,player.pos,player.forward(),2.4) : null;
       nearCar = !overview&&!driving.driving ? driving.nearest() : null;
       nearHouse = null; let best = 6;
@@ -1377,7 +1507,7 @@ async function start() {
       }
       if(mode==='town' && !overview && !driving.driving){
         for(const place of life.places.values()){
-          if(atCivicEntrance(place,player.pos)){
+          if(place.kind!=='park'&&atCivicEntrance(place,player.pos)){
             if(!enterShop(place.id, true)){
               // Keep closed/unattended buildings secure, but give an obvious
               // physical rejection outside the expanded entrance trigger.
@@ -1450,10 +1580,11 @@ async function start() {
       else {
         nearThing = player.seated ? null : pickNear();
         nearNPC = null;
-        $('prompt').hidden = (!nearThing && !player.seated) || !!panelOpen || npcChat.isOpen() || !$('npc-roster').hidden;
+        if (carried && !panelOpen) { $('prompt').hidden = false; $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Put down the ${carried.label.toLowerCase()}`; }
+        else $('prompt').hidden = (!nearThing && !player.seated) || !!panelOpen || npcChat.isOpen() || !$('npc-roster').hidden;
         const who = nearThing?.person && inside.people?.find((p) => p.key === nearThing.key);
         if (player.seated) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Stand up · Move or jump to stand`;
-        else if (nearThing) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.act?.do==='sit'?'Sit on ':''}${nearThing.label}${who ? ` · ${who.activity}` : ''}`;
+        else if (nearThing && !carried) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.act?.do==='sit'?'Sit on ':nearThing.act?.do==='pickup'?'Pick up ':''}${nearThing.label}${who ? ` · ${who.activity}` : ''}`;
         if (input.consume('use')) use();
         // An exit action can dispose the interior during this frame. Keep the town loop alive.
         if(inside){
@@ -1536,6 +1667,9 @@ async function start() {
     houses: houses.map((h) => ({ coordinate: h.coordinate, name: h.name })),
     campuses:()=>town.campuses.map(s=>({id:s.id,name:s.name,door:s.entry,scaleStatus:s.scaleStatus,wings:s.wings})),
     enterCampus,
+    exitCampus:()=>{if(!inside?.campus)return false;leave();return true;},
+    enterHome:(coordinate)=>{if(!town.lots.has(coordinate)||mode!=='town')return false;enter(coordinate);return true;},
+    careHomes:()=>[...careHousing.houses.entries()].map(([coordinate,workers])=>({coordinate,people:workers.map(w=>({name:w.name,job:w.job,facility:w.facility}))})),
     npcs: streetNPCs.map((x) => ({ id: x.npc.id, name: x.npc.name, coordinate: x.npc.coordinate })),
     npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),
     talkTo: (id) => npcChat.show(id),
@@ -1550,7 +1684,7 @@ async function start() {
       near: nearThing?.key || null, nearNPC: nearNPC?.npc.id || null, nearHouse: nearHouse?.house.coordinate || null,
       panel: panelOpen ? { title: $('panel-title').textContent, text: $('panel-body').textContent, links: [...$('panel-actions').querySelectorAll('a')].map((a) => a.href), buttons: [...$('panel-actions').querySelectorAll('button')].map((b) => b.textContent) } : null,
       people: (mode === 'town' ? townLife.people.map((p) => ({ key: p.key, name: p.v.name, job: p.v.job, x: p.v.x, z: p.v.z, inside: p.v.inside, activity: p.v.activity, visible: p.fig.group.visible })) : (inside?.people || []).map((p) => ({ key: p.key, name: p.name, x: p.pos.x, z: p.pos.z, room: p.room, activity: p.activity, state:p.state||'staff', visible:p.group.visible }))),
-      time: life.time(), day: life.day, minute: life.minute, speed: life.speed, daylight: life.daylight(), sound: ambience.on, soundDebug: { ...ambience.debug }, needs:life.needsReport(),
+      time: life.time(), date: life.dateLabel(), weekday:life.weekday(), isoDate:life.calendar().iso, day: life.day, minute: life.minute, speed: life.speed, daylight: life.daylight(), sound: ambience.on, soundDebug: { ...ambience.debug }, needs:life.needsReport(),
       nearPerson: nearPerson?.key || null,
       active: [...active], playing: playing?.id || null, gameSrc: playing ? $('game-frame').getAttribute('src') : null, calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, renderPixelRatio,
     }),
@@ -1586,6 +1720,7 @@ async function start() {
       return false;
     },
     // Stands just inside the entrance facing the exit door.
+    thing:(k)=>{const t=inside?.interactables?.find(i=>i.key===k)||(carried?.key===k?carried:null);return t?{x:t.pos.x,z:t.pos.z,y:t.mesh?.position.y??0,carried:carried===t}:null;},
     toExit() { if (!inside) return false; player.place(inside.spawn.x, inside.spawn.z, Math.PI); return true; },
     place(x, z, yaw) { player.place(x, z, yaw); },
     probe(x, z) { return world.hits(x, z, player.radius); },
@@ -1603,8 +1738,11 @@ async function start() {
     meetGuide() { if (mode === 'house') leave(false); player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return 'guide'; },
     goPlace,
     driveDashboard:()=>drivingDashboard.getState(),
+    inventory:()=>{const me=life.civic.player;return {items:(me.items||[]).map(i=>i.type),held:equippedType(me),torchOn:torchLit(me),light:torchLight.intensity};},
+    market:()=>({standing:market.root.visible,spots:market.spots.map(s=>({key:s.key,x:s.pos.x,z:s.pos.z,label:s.label}))}),
     roadSigns:()=>roadSigns.signs.map(({type,x,z,yaw})=>({type,x,z,yaw})),
     driveHeadlights:()=>driving.headlightStatus(),
+    carePopulation:(id='bracken-house')=>({residents:careResidents(id).length,onDuty:careOnDuty(id,life.day,life.minute),metrics:careDailyMetrics(id,life.day),staffHousing:careHousing.staffHoused,homes:careHousing.houses.size}),
     soundscape:()=>({track:ambience.debug.track,selectedTrack:ambience.selectedTrack,vehicle:ambience.debug.vehicle}),
     estateLights:()=>({count:masterplan.lampPositions.length,sourceCount:town.streetLighting.sourceCount,visible:masterplan.lampHeads.material.emissiveIntensity>0}),
     driveDiagnostics:()=>({
@@ -1639,6 +1777,7 @@ async function start() {
       ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
       // Jumps the clock (tests): everyone re-plans their day from scratch.
       setWeather(w) { life.civic.weather = w; },
+      setDay(day) { life.day = day; },   // tests: jump the calendar (e.g. to a market Saturday)
       setTime(minute) { life.minute = minute; life.stats = life.freshStats(); for (const v of life.villagers) { v.step = null; v.path = []; v.queue = []; v.doneToday = {}; } life.startShiftsInProgress(); },
       run(minutes) { for (let m = 0; m < minutes; m += 0.5) life.tick(0.5); },
       // A villager's live route and plan, for diagnosing where people walk.
