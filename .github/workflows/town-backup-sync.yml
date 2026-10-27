@@ -155,3 +155,5 @@ jobs:
 # Soundscape and 10-vehicle garage release verification, source JoshMemory/main 27 October 2026. Full tests and desktop/Android smoke required before mirror publication.
 
 # Retry 27 October 2026 soundscape release after fixing missing persisted-track preference fallback in work-audio regression.
+
+# Release 27 October 2026 enhanced starter crank, throttle intake, gear-change clunks and engine shutdown sound from latest JoshMemory/main after earlier soundtrack release.
