@@ -159,3 +159,5 @@ jobs:
 # Release 27 October 2026 enhanced starter crank, throttle intake, gear-change clunks and engine shutdown sound from latest JoshMemory/main after earlier soundtrack release.
 
 # Calendar release: Day 1 Monday 26 Oct 2026, weekend trading, rostered NPC days off and Australian dates. Required test: tests/town-calendar.mjs; verified source main, no new hosting subscription.
+
+# Calendar release retry: restore deterministic power service across weekends with finite station reserves, critical physical fuel delivery and Sunday-to-Monday wake times; rerun all test gates.
