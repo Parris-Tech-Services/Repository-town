@@ -1,0 +1,59 @@
+name: Independent live production Repo Town playtest
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-production-playtest.yml'
+permissions:
+  contents: read
+jobs:
+  playtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - name: Checkout current canonical game and fixed browser test
+        uses: actions/checkout@v4
+        with:
+          repository: joshualparris/JoshMemory
+          ref: 2e97af7929a626ee71845d099489c825d69cf0cf
+          path: source
+          persist-credentials: false
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/repository-town/package-lock.json
+      - name: Install dependencies and Chromium
+        working-directory: source/repository-town
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+      - name: Require exact published 6caf278 game code and public HTTP 200
+        env:
+          EXPECTED_GAME_SHA: 6caf278697242eda32bd7ce5805b09c3b54f732e
+        run: |
+          set -euo pipefail
+          curl --retry 3 --fail --silent --show-error --location 'https://repository-town-claude-complete.vercel.app/' -o /tmp/rt-live-index.html
+          test -s /tmp/rt-live-index.html
+          curl --retry 3 --fail --silent --show-error --location 'https://repository-town-claude-complete.vercel.app/release.json' -o /tmp/rt-live-release.json
+          node -e "const r=require('/tmp/rt-live-release.json');if(r.sourceCommit!==process.env.EXPECTED_GAME_SHA)throw Error('Production source mismatch '+r.sourceCommit);for(const p of ['world/aged-care-population.js','world/aged-care-operations.js','world/arts-studio-interior.js','main.js'])if(!r.files[p])throw Error('Missing public module '+p);console.log('Production hash and game modules verified',r.sourceCommit,r.contentHash)"
+      - name: Real desktop and Android-size Chromium WebGL playtest against Vercel production
+        working-directory: source/repository-town
+        env:
+          TOWN_PLAYTEST_URL: https://repository-town-claude-complete.vercel.app/
+          TOWN_URL: https://repository-town-claude-complete.vercel.app/
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          node tests/webgl-playtest.mjs
+          node tests/aged-care-campuses-live-browser.mjs
+      - name: Preserve gameplay screenshots and browser errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-production-webgl-playtest
+          path: source/repository-town/test-results/webgl-playtest/
+          retention-days: 7
+          if-no-files-found: ignore
