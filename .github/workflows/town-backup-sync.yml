@@ -175,3 +175,5 @@ jobs:
 # 2026-10-27 verified source catch-up after Chromium starter-phase race fix: build JoshMemory/main, execute full tests and mobile WebGL, publish exact source fingerprint only on pass.
 
 # 27 Oct 2026: release pin and live WebGL validation for compact five-character CC0 KayKit storybook style, shared animations and restored classic fallback.
+
+# Retry storybook CC0 five-rig release following explicit bicycle-ground-height consistency fix in JoshMemory/main.
