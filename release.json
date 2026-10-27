@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "2e97af7929a626ee71845d099489c825d69cf0cf",
-  "contentHash": "686dd16d04e9a094139bc833980e8918f3821962f61aa8cb3074ebb3c79c0272",
+  "sourceCommit": "894464253c868cd49e8ba65a7e50a53fcae1f86b",
+  "contentHash": "a5a7c6ff7011fcb701baf69210a84fe5bf20b995d1a2819b1aba07a147f84005",
   "production": "https://repository-town-claude-complete.vercel.app/",
   "staging": "https://repository-town-claude-playtest.vercel.app/",
   "backup": "https://parris-tech-services.github.io/Repository-town/",
@@ -149,7 +149,7 @@
     "audio/town/VO059.mp3": "5822459e25681111e05a0359dc2c14d910567e1c40f153cd8e01c355e0181fa9",
     "audio/town/VO060.mp3": "349317b3590072a5808bc1254219b8bb833f15a4e7126316e9c9388f502b7967",
     "backup-unified/index.html": "f79d20b29ec4d0b7764b557f377572792ad8ac50580d61035c7ee3a0dc936d43",
-    "companion-knowledge.json": "d1b282aa99f2163c65b2ebe36775ec6f77f02cdd7ace5a58b6c252efd6796adb",
+    "companion-knowledge.json": "a5aafd7b12d148399a784da158256f171bee66bdd543a75e25af4c26eeae8306",
     "dialogue/schema.js": "3e2366a023432da5ace4a395463217caabd680d41d86aeafcc3ef970bba29513",
     "engine/collision.js": "62b3d105604b6a51fb0af44c7694dbc2c6bec52cfc537c5709fa4ed97c6be041",
     "engine/input.js": "b4ee3662c41fcd8b1ac471acd226ee94b5265a9fc0b6d68592d167d30d004792",
@@ -1152,7 +1152,7 @@
     "world/house-entrance.js": "091169f248c9fe0b307e487017687bceb260eac559fab595561c2be95d96617a",
     "world/household.js": "fcead45eca5c79bb2a4d16ba5936378c2df51315cc90c2b0ed158d27ae8a37f4",
     "world/interior-kit.js": "2603d84b4e1e9d0908640575c2d8bc200a6ae0bd22ba0757510b68eff4b5c0a5",
-    "world/interior.js": "589d7a6d9d211aafc0c6dd62ff7bed2c1d212c2b896b6333ef43fc1a2f3ecde1",
+    "world/interior.js": "44e73b5bf192ffd785efb3b4933289344bb987cc7782e28592f14b527c40c96b",
     "world/inventory.js": "5469207af745e8963b490f859e44e989f26cee0689cdd2ca584ac1d4715c23bd",
     "world/jobs.js": "cfdebd2c81f5045aff111f2483fd1be67db4e40c3a3eedf243e18c196f8b571c",
     "world/justice-interiors.js": "494432def7bbcf70155affe858276299d8e9527ec6a50f3a95a3bfaaeadbff5f",
@@ -1259,6 +1259,6 @@
     "world/workplay.js": "4c277d49efb8fe6c5cc11df1e12c76b509747cd1ad70a6cdb1d28913e03de873",
     "world/yarn-dialogue.js": "be6717626487bd10bfc463cee2d37b1a194dbfc1f6241aec8fca504042bde717",
     "world/yeoval-campus.js": "310b2c834fc040c450d64499176befff06ee51ede7f9c08bb987eddd62545109",
-    "world/yeoval-interior.js": "70ee88d479de3469cb9fc77ab8a57867b38e78f4208e5895e01cf296e44b5ded"
+    "world/yeoval-interior.js": "351341e26675c8732600c6d523cfc6fb4e0932ecfd67ba57dafcd1e5090101c0"
   }
 }
