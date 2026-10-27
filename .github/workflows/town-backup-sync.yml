@@ -91,6 +91,7 @@ jobs:
           curl -fsSI http://127.0.0.1:8091/ >/dev/null
           node tests/webgl-playtest.mjs
           TOWN_URL=http://127.0.0.1:8091/ node tests/pub-id-browser.mjs
+          TOWN_URL=http://127.0.0.1:8091/ node tests/aged-care-campuses-live-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always() && steps.verified.outputs.changed == 'true'
         with:
