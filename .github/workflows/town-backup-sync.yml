@@ -157,3 +157,5 @@ jobs:
 # Retry 27 October 2026 soundscape release after fixing missing persisted-track preference fallback in work-audio regression.
 
 # Release 27 October 2026 enhanced starter crank, throttle intake, gear-change clunks and engine shutdown sound from latest JoshMemory/main after earlier soundtrack release.
+
+# Calendar release: Day 1 Monday 26 Oct 2026, weekend trading, rostered NPC days off and Australian dates. Required test: tests/town-calendar.mjs; verified source main, no new hosting subscription.
