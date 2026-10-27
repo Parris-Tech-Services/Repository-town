@@ -149,3 +149,5 @@ jobs:
 # Source release request 2026-10-26: merged kitchen movement, work lighting and actual touch-joystick QA at fad613dc56f47860b4f53bf6df95c74a3e674eaf.
 # Retry gated kitchen-release mirror with the latest Pages QA workflow included (2026-10-26).
 # Rebuild mirror for verified source post-office architecture merge 1617742d2babe68a53328aa5908a17bab78c64c4; preserve live audit gate.
+
+# Dashboard Pages verification b9af999d15f4bb320b04c508c8dff931e11d7770: synchronise current canonical main including car gauges and Show/Hide HUD after full independent checks.
