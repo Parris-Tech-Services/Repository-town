@@ -164,3 +164,5 @@ jobs:
 # Calendar release retry: restore deterministic power service across weekends with finite station reserves, critical physical fuel delivery and Sunday-to-Monday wake times; rerun all test gates.
 
 # Research-linked Bracken House and Yeoval UPA care cohorts, live 24/7 staffing, resident render tests and southside staff housing release 2026-10-27.
+
+# One-off verified care-population release retry after removing research-repository identifiers from public runtime code. Privacy gate remains enforced.
