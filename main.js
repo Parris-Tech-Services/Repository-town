@@ -16,11 +16,21 @@ import { isHudBlocked } from './ui/hud-visibility.js';
 import * as THREE from 'three';
 import { CollisionWorld } from './engine/collision.js';
 import { Input } from './engine/input.js';
+import {loadMovementSpeed,saveMovementSpeed,movementSpeedFactor} from './engine/movement-speed.js';
 import { Player } from './engine/player.js';
 import { loadSave, writeSave, clearSave } from './engine/save.js';
 import { discoveryProgress } from './ui/discovery-log.js';
 import { buildTown, streetSigns, lotPosition } from './world/town.js';
-import { houseAddress, parseTownAddress } from './world/addresses.js';
+import { buildYeovalInterior } from './world/yeoval-interior.js';
+import { buildMasterplan } from './world/masterplan-built.js';
+import { buildCountryInterior,countryEntrance,countryExitPose } from './world/country-interiors.js';
+import { CORE_ROADS } from './world/masterplan-model.js';
+import { RAIL_Z } from './world/rail-corridor.js';
+import { createTownMap } from './ui/town-map.js';
+import { createCheatMenu } from './ui/cheat-menu.js';
+import { summonCar, claimProperty, nearestPropertyKey, planTitleKey, addMoney, refreshNeeds, fixAllCars, setClock } from './world/cheats.js';
+import { buildBrackenInterior } from './world/bracken-interior.js';
+import { houseAddress, parseTownAddress, placeAddress } from './world/addresses.js';
 import { buildInterior, labelVisible } from './world/interior.js';
 import { honourPaulRoe } from './world/paul-roe-tribute.js';
 import { buildCivicInterior } from './world/shop-interior.js';
@@ -51,6 +61,7 @@ import { separatePedestrians, steerPedestrians } from './world/pedestrian-spacin
 import { createTownLife } from './world/townlife.js';
 import { createEmergencyResponseVisuals } from './world/emergency-response-visuals.js';
 import { createPlayerDriving } from './world/player-driving.js';
+import { createDrivingDashboard } from './ui/driving-dashboard.js';
 import { nearestSeat } from './world/seats.js';
 import { furniturePanel } from './ui/furniture.js';
 import { createAmbience } from './ui/ambience.js';
@@ -157,20 +168,36 @@ async function start() {
   // Smooth mode draws less of the distance; phones start with it on.
   let lowPerf = touch;
   streetSigns(town.group, data.streets, makeLabel);
+  const masterplan = buildMasterplan(town.group, makeLabel);
+  town.attachEstateLighting(masterplan);
+  for (const site of town.campuses || []) {
+    const sign=makeLabel(site.name+' · Aged care campus', 'house');
+    sign.position.set(
+      site.entry.x-(site.entryAxis==='west'?2.9:0),
+      4.75,site.entry.z-(site.entryAxis==='west'?0:2.9));
+    town.group.add(sign);
+  }
   const half = { x: town.bounds.width / 2, z: town.bounds.depth / 2 };
   const edges = [
-    { x0: -half.x - 5, x1: half.x + 5, z0: -half.z - 5, z1: -half.z }, { x0: -half.x - 5, x1: half.x + 5, z0: half.z, z1: half.z + 5 },
-    { x0: -half.x - 5, x1: -half.x, z0: -half.z, z1: half.z }, { x0: half.x, x1: half.x + 5, z0: -half.z, z1: half.z },
+    // Include all 195 homes west to x -1330, and Grevillea Street at z 457.
+    // Boundaries lie beyond the drawn footpaths and extended terrain.
+    { x0: -1495, x1: 595, z0: -395, z1: -390 }, { x0: -1495, x1: 595, z0: 555, z1: 560 },
+    { x0: -1495, x1: -1490, z0: -395, z1: 560 }, { x0: 590, x1: 595, z0: -395, z1: 560 },
   ];
-  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...edges]);
+  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...masterplan.colliders, ...edges]);
   // Dynamic vehicle footprints block player motion as well as truck movement.
   // A vehicle is approx 2.2m wide and 6.6m long; use a conservative
   // rotated-axis AABB for the town's existing 2D collision engine.
-  townWorld.dynamic = () => life.trucks.map(tr => {
-    const sn = Math.abs(Math.sin(tr.heading)), cs = Math.abs(Math.cos(tr.heading));
-    const hx = 1.18*cs + 3.4*sn, hz = 1.18*sn + 3.4*cs;
-    return {x0:tr.x-hx,x1:tr.x+hx,z0:tr.z-hz,z1:tr.z+hz};
-  });
+  townWorld.dynamic = () => [
+    ...life.trucks.map(tr => {
+      const sn = Math.abs(Math.sin(tr.heading)), cs = Math.abs(Math.cos(tr.heading));
+      const hx = 1.18*cs + 3.4*sn, hz = 1.18*sn + 3.4*cs;
+      return {x0:tr.x-hx,x1:tr.x+hx,z0:tr.z-hz,z1:tr.z+hz};
+    }),
+    // A raised boom must not stop walking, and a lowering boom must not trap
+    // anybody already between the protected approaches. Query live state.
+    ...townLife.railBarrierColliders(player.pos.x,player.pos.z)
+  ];
 
   const input = new Input(renderer.domElement, $('touch'));
   const captureButton = $('btn-capture');
@@ -190,7 +217,25 @@ async function start() {
   if (input.touch) $('touch').hidden = false;
   loadFurniture().catch(() => {});   // real furniture models; interiors fall back to boxes until they arrive
   const player = new Player(camera);
+  let movementSpeed=loadMovementSpeed(localStorage);
+  const speedSlider=$('movement-speed'), speedValue=$('movement-speed-value');
+  function showSpeedSetting(){
+    speedSlider.value=String(movementSpeed);
+    speedValue.textContent=movementSpeed.toFixed(1)+'×';
+    $('movement-speed-preview').textContent='Walk '+(4.2*movementSpeed).toFixed(1)+' m/s · Run '+(7.6*movementSpeed).toFixed(1)+' m/s (before hunger/fatigue)';
+  }
+  function closeSettings(){ $('settings').hidden=true; $('settings-close').blur(); speedSlider.blur(); input.reset(); }
+  speedSlider.addEventListener('input',()=>{
+    movementSpeed=saveMovementSpeed(localStorage,speedSlider.value);
+    showSpeedSetting();
+  });
+  $('movement-speed-reset').addEventListener('click',()=>{
+    movementSpeed=saveMovementSpeed(localStorage,1);showSpeedSetting();
+    status('Movement speed restored to normal.');
+  });
+  showSpeedSetting();
   const driving=createPlayerDriving(life,scene,townWorld,player,camera,input);
+  const drivingDashboard=createDrivingDashboard();
   const tableOrder = document.createElement('button');
   tableOrder.id='btn-table-order';tableOrder.type='button';
   tableOrder.textContent='🍽 Order at table';
@@ -242,6 +287,7 @@ async function start() {
       roster:!$('npc-roster').hidden,
       yarns:yarns.isOpen(),
       help:!$('help').hidden,
+      settings:!$('settings').hidden,
       game:!$('game').hidden,
       map:overview,
     };
@@ -310,7 +356,7 @@ async function start() {
     inside = { house, ...next, place:inside.place,floorIndex:target, floors, people:next.people || [], view:inside.view, ownMeshes:inside.ownMeshes };
     scene.add(next.group);
     world = new CollisionWorld(next.colliders);
-    world.dynamic=()=>next.doors.filter(d=>d.userData.privacy&&d.userData.open<.8).map(d=>({x0:d.userData.centre.x-.7,x1:d.userData.centre.x+.7,z0:d.userData.centre.z-.06,z1:d.userData.centre.z+.06}));
+    world.dynamic=()=>(next.doors || []).filter(d=>d?.userData?.centre&&d.userData.privacy&&d.userData.open<.8).map(d=>({x0:d.userData.centre.x-.7,x1:d.userData.centre.x+.7,z0:d.userData.centre.z-.06,z1:d.userData.centre.z+.06}));
     player.place(next.landing.x, next.landing.z, Math.PI);
     player.baseHeight = floors.elevations?.[target]??target*FLOOR_HEIGHT;
     floorDoorCooldown = 0.9;
@@ -390,6 +436,41 @@ async function start() {
   }
   // The high-street buildings now have their own walkable rooms and usable
   // counters. Keep the existing villager/farm economy running in the street.
+  // Purpose-built northern campus; no part of the small row-7 storefront.
+  function enterCountryHome(home, keepFacing=false) {
+    if(mode!=='town'||driving.driving) return false;
+    const yawIn=player.yaw;
+    const built=buildCountryInterior(home,makeLabel);
+    inside={house:{coordinate:'P:'+home.parcelId,name:home.country+' · '+home.tradition,address:home.address,
+      kind:'home',country:home.country},countryHome:home,...built,floorIndex:0,floors:null};
+    scene.add(built.group);town.group.visible=false;
+    scene.background.set(INDOOR);scene.fog=null;
+    world=new CollisionWorld(built.colliders);
+    player.place(built.spawn.x,built.spawn.z,keepFacing?yawIn-(home.facesNorth?Math.PI:0):0);
+    mode='house';player.baseHeight=0;updateFloorBadge();$('btn-exit').hidden=false;
+    closePanel();npcChat.close();ambience.door();
+    $('card').hidden=true;delete $('card').dataset.coord;
+    status('Inside '+home.country+' · '+home.tradition+'. Ground floor includes a bedroom, bathroom, kitchen and living area. Upper levels are not yet accessible; this is not an approved building design.');
+    return true;
+  }
+  function enterCampus(id, keepFacing=false) {
+    if(mode!=='town')return false;
+    const site=(town.campuses||[]).find(x=>x.id===id);
+    if(!site)return false;
+    const yawIn=player.yaw;
+    const built=site.id==='bracken-house'?buildBrackenInterior(makeLabel):buildYeovalInterior(makeLabel);
+    inside={house:{coordinate:site.id==='bracken-house'?'BRACKEN':'YEOVAL',name:site.name,kind:'care'},campus:site,
+      ...built,people:[],floorIndex:0,floors:null};
+    scene.add(built.group);town.group.visible=false;
+    scene.background.set(INDOOR);scene.fog=null;
+    world=new CollisionWorld(built.colliders);
+    player.place(built.spawn.x,built.spawn.z,keepFacing?yawIn-site.rotation:0);
+    mode='house';player.baseHeight=0;updateFloorBadge();$('btn-exit').hidden=false;
+    closePanel();npcChat.close();ambience.door();
+    $('card').hidden=true;delete $('card').dataset.coord;
+    status('Inside '+site.name+'. This is an illustrative public-reference layout, not a surveyed floor plan. Return via the public entrance.');
+    return true;
+  }
   let lastDeniedEntrance = '', lastDeniedTime = 0;
   function enterShop(id, keepFacing = false) {
     if(mode!=='town'||!life.places.has(id))return false;
@@ -412,12 +493,17 @@ async function start() {
     const floors=site.id==='pub'?createPubFloorStack(built,site,makeLabel):null;
     if(floors){floors.levels[0].people=staff;for(const level of floors.levels.slice(1))attachPilotInteriorLighting(level.group,'B:pub');}
     const ex=built.exitZone;
+    if (!ex || !built.spawn || !Array.isArray(built.colliders) || !Array.isArray(built.rooms)) {
+      console.error('Invalid civic interior data',site.id,{exitZone:ex,spawn:built.spawn,rooms:built.rooms});
+      status('This building interior is temporarily unavailable. You can keep exploring the town.');
+      return false;
+    }
     inside={house:brief,place:site,...built,people:staff,floors,floorIndex:0,
       view:townView({x:(ex.x0+ex.x1)/2,z:ex.z0+0.1},site.door,doorTurn(site)),ownMeshes:townLife.building(id)};
     scene.add(built.group);town.group.visible=false;
     scene.background.set(INDOOR);scene.fog=null;
     world=new CollisionWorld(built.colliders);
-    world.dynamic=()=>built.doors.filter(d=>d.userData.privacy&&d.userData.open<.8).map(d=>({x0:d.userData.centre.x-.7,x1:d.userData.centre.x+.7,z0:d.userData.centre.z-.06,z1:d.userData.centre.z+.06}));
+    world.dynamic=()=>(built.doors || []).filter(d=>d?.userData?.centre&&d.userData.privacy&&d.userData.open<.8).map(d=>({x0:d.userData.centre.x-.7,x1:d.userData.centre.x+.7,z0:d.userData.centre.z-.06,z1:d.userData.centre.z+.06}));
     // The same TownLife villagers that shop, eat and work here now have
     // visible bodies, independent of the staff member behind the counter.
     inside.visitors=createShopVisitors(site,life,inside,makeLabel,inside.people);
@@ -434,6 +520,8 @@ async function start() {
     closePanel(); npcChat.close();
     const coord = inside.house.coordinate;
     const shop=inside.place||null;
+    const campus=inside.campus||null;
+    const countryHome=inside.countryHome||null;
     inside.bakeryImmersion?.dispose();
     inside.workplay?.dispose();
     if(inside.floors?.isPub)for(const level of inside.floors.levels)if(level.workplay!==inside.workplay)level.workplay?.dispose();
@@ -446,7 +534,16 @@ async function start() {
     $('btn-exit').hidden = true;
     town.group.visible = true; scene.background.set(SKY); scene.fog = fog;
     if (placeOutside) {
-      if (shop) {
+      if (campus) {
+        // The visitor emerges facing away from the same public entrance.
+        const out=campus.entryAxis==='west'
+          ?{x:campus.entry.x-3.25,z:campus.entry.z}
+          :{x:campus.entry.x,z:campus.entry.z-3.25};
+        player.place(out.x,out.z,keepFacing?yawInside+campus.rotation:Math.PI+campus.rotation);
+      } else if (countryHome) {
+        const pose=countryExitPose(countryHome);
+        player.place(pose.x,pose.z,keepFacing?yawInside+(countryHome.facesNorth?Math.PI:0):pose.yaw);
+      } else if (shop) {
         const boxes=[...townWorld.all,...townWorld.dynamic()];
         const pose=via==='secondary'&&shop.id==='pub'?pubSecondaryExitPose(shop,boxes,player.radius+.08):via==='rear'&&shop.id==='pub'?pubRearExitPose(shop,boxes,player.radius+.08):civicExitPose(shop,boxes,player.radius+0.08);
         if (pose) player.place(pose.x,pose.z,keepFacing ? yawInside + doorTurn(shop) : pose.yaw);
@@ -456,7 +553,7 @@ async function start() {
     // Close the door behind the player so the doorway does not re-trigger.
     const d = town.doors.find((d) => d.userData.coordinate === coord); if (d) d.userData.open = 0;
     ambience.door();
-    status(shop?`Back outside ${shop.name}.`:`Back on the street at ${coord}.`);
+    status(campus?`Back outside ${campus.name}.`:countryHome?`Back outside ${countryHome.address} · ${countryHome.country}.`:shop?`Back outside ${shop.name}.`:`Back on the street at ${coord}.`);
   }
 
   // ── Overview (bird's-eye) ────────────────────────────────────────────────
@@ -496,7 +593,7 @@ async function start() {
     const addressed = parseTownAddress(q) || parseTownAddress(code);
     // Some civic destinations have no postal address or column. Search must never crash on missing metadata.
     const lower = (value) => String(value ?? '').toLowerCase();
-    const p = places.find((p) => lower(placeLabel(p)) === q || lower(p.name) === q || lower(p.id) === q || lower(p.address) === q || (p.side==='south' && q==='south '+lower(p.col)+'8') || (addressed && p.address===addressed.address && !byCoord.has(addressed.col+addressed.row)));
+    const p = places.find((p) => lower(placeLabel(p)) === q || lower(p.name) === q || lower(p.id) === q || lower(p.address) === q || (p.id === 'library' && /^(?:sir reginald )?repo public library$/.test(q)) || (p.side==='south' && q==='south '+lower(p.col)+'8') || (addressed && p.address===addressed.address && !byCoord.has(addressed.col+addressed.row)));
     const h = !p && (byCoord.get(code) || (addressed && addressed.side==='S' && byCoord.get(addressed.col+addressed.row)) || houses.find((h) => lower(h.name) === q || lower(h.address) === q || lower(`${h.address} · ${h.name}`) === q || lower(`${h.coordinate} · ${h.name}`) === q));
     const near = !p && !h && places.find((p) => lower(p.name).includes(q));
     const named = !p && !h && !near && houses.find((h) => lower(h.name).includes(q));
@@ -505,6 +602,84 @@ async function start() {
     else status(`No building matches "${$('search').value}".`);
   });
   $('btn-map').onclick = () => setOverview(!overview);
+  // Interactive 2D map (src/ui/town-map.js). Building extents are measured once from the
+  // rendered meshes, so the map matches what the player actually sees.
+  const townMap = createTownMap({
+    getData() {
+      const box = new THREE.Box3(), extent = (objs) => { box.makeEmpty(); for (const o of [objs].flat().filter(Boolean)) { o.updateWorldMatrix(true, true); box.union(new THREE.Box3().setFromObject(o)); } return box.isEmpty() ? null : { x: (box.min.x + box.max.x) / 2, z: (box.min.z + box.max.z) / 2, w: box.max.x - box.min.x, d: box.max.z - box.min.z }; };
+      const buildings = [];
+      for (const [coord, l] of town.lots) {
+        const e = extent(l.mesh) || { x: l.lot.x, z: l.doorPos.z - 7, w: 12, d: 12 };
+        buildings.push({ id: 'H:' + coord, name: l.house.name, address: `${houseAddress(coord)} (${coord})`, detail: 'House', ...e, w: Math.min(e.w, 24), d: Math.min(e.d, 30) });
+      }
+      for (const p of life.places.values()) {
+        if (p.kind === 'home' || p.kind === 'park') continue;
+        let e = null; try { e = extent(townLife.building?.(p.id)); } catch { e = null; }
+        if (!e || e.w > 120 || e.d > 120) e = { x: p.x, z: p.door.z + (p.side === 'south' || p.side === 'north' ? 6 : -6), w: 11, d: 10 };
+        let address = ''; try { address = placeAddress(p); } catch { address = ''; }
+        buildings.push({ id: 'B:' + p.id, name: p.name, address, detail: [p.kind, p.opens !== undefined ? `open ${String(Math.floor(p.opens / 60)).padStart(2, '0')}:00–${String(Math.floor(p.closes / 60)).padStart(2, '0')}:00` : ''].filter(Boolean).join(' · '), civic: true, ...e });
+      }
+      for (const c of town.campuses || []) buildings.push({ id: 'C:' + c.id, name: c.name, address: 'Aged care campus', detail: 'Walkable campus', civic: true, x: c.x, z: c.z, w: 40, d: 40 });
+      const roads = [
+        ...CORE_ROADS.map((r) => ({ ...r, name: r.id.startsWith('street-') ? data.streets[Number(r.id.slice(7)) - 1] : null })),
+        ...masterplan.roads.map((r) => ({ ...r, plan: true })),
+      ];
+      const fields = [...life.places.values()].filter((p) => p.field).map((p) => p.field);
+      const reserves = (town.outskirts?.parcels || []).filter((r) => !['S-R1', 'S-AG1', 'S-AG2'].includes(r.id));
+      for (const h of masterplan.homes) buildings.push({ id: 'P:' + h.parcelId, name: h.country + ' · ' + h.address, address: h.address, detail: h.tradition + ' · 195-country neighbourhood', x: h.x, z: h.facesNorth ? h.frontZ + h.design.d / 2 : h.frontZ - h.design.d / 2, w: h.design.w, d: h.design.d });
+      const homeOn = new Map(masterplan.homes.map((h) => [h.parcelId, h]));
+      const parcels = masterplan.parcels.map((p) => ({ ...p, status: homeOn.has(p.id) ? `${homeOn.get(p.id).country} · ${homeOn.get(p.id).tradition}` : p.use === 'park' ? 'Open space' : 'Vacant site, not yet serviced' }));
+      return { roads, buildings, parcels, fields, reserves, railZ: RAIL_Z };
+    },
+    getPlayer: () => (mode === 'town' ? { x: player.pos.x, z: player.pos.z, yaw: player.yaw } : null),
+    onOpen: () => { input.reset(); closePanel(); },
+  });
+  $('btn-townmap').onclick = () => townMap.open();
+  // Hidden playtest cheat menu (src/ui/cheat-menu.js): five taps on the HUD title or ` three times.
+  const toTown = () => { if (driving.driving) return 'Park and get out first.'; if (mode === 'house') leave(false); return null; };
+  const teleport = (x, z, yaw, where) => { const busy = toTown(); if (busy) return { message: busy }; player.place(x, z, yaw); return { message: 'Teleported to ' + where + '.' }; };
+  const propertyPositions = () => new Map([
+    ...[...town.lots].map(([coord, l]) => ['H:' + coord, l.doorPos]),
+    ...[...life.places.values()].map((p) => ['B:' + p.id, { x: p.x, z: p.door?.z ?? p.front?.z ?? 0 }]),
+    ...masterplan.homes.map((h) => ['P:' + h.parcelId, { x: h.x, z: h.frontZ }]),
+  ]);
+  const cheats = createCheatMenu({
+    trigger: document.querySelector('#hud h1') || document.querySelector('h1'),
+    actions: {
+      car: () => { const busy = toTown(); if (busy) return { message: busy }; return summonCar(life, player.pos.x, player.pos.z, { clear: (x, z) => !townWorld.hits(x, z, 1.3) }); },
+      carHere: () => {
+        const busy = toTown(); if (busy) return { message: busy };
+        const r = summonCar(life, player.pos.x, player.pos.z, { clear: (x, z) => !townWorld.hits(x, z, 1.3) });
+        if (!r.ok) return r;
+        // Stand at the driver's door (driving.enter needs the player within 3.1 m), then get in.
+        const v = r.vehicle, side = [[0, 1.8], [0, -1.8], [1.8, 0], [-1.8, 0]].map(([dx, dz]) => ({ x: v.x + dx, z: v.z + dz })).find((p) => !townWorld.hits(p.x, p.z, player.radius)) || { x: v.x, z: v.z };
+        player.place(side.x, side.z, player.yaw);
+        driving.nearest(v.x, v.z, 0.5);
+        const message = driving.enter(v); status(message);
+        return { message, close: true };
+      },
+      fix: () => fixAllCars(life),
+      goNew: () => teleport(-150, 270.5, Math.PI, 'Wattle Street in the new neighbourhood'),
+      goWork: () => teleport(456, 300, Math.PI, 'Saleyards Road and the employment lots'),
+      goHigh: () => teleport(0, 173.6, 0, 'the High Street'),
+      goGuide: () => { const busy = toTown(); if (busy) return { message: busy }; player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return { message: 'Teleported to the Town Guide.' }; },
+      money: () => addMoney(life, 10000),
+      needs: () => refreshNeeds(life),
+      buyNear: () => { const key = nearestPropertyKey(life, player.pos.x, player.pos.z, propertyPositions()); return key ? claimProperty(life, key) : { message: 'No property nearby.' }; },
+      buyKey: (raw) => {
+        const v = String(raw || '').trim(); if (!v) return { message: 'Type a house grid code like A1, or B:bakery.' };
+        let key = /^[HBP]:/i.test(v) ? v[0].toUpperCase() + v.slice(1) : /^[A-Z][1-8]$/i.test(v) ? 'H:' + v.toUpperCase() : planTitleKey(v);
+        if (!key) { const p = [...life.places.values()].find((q) => q.name.toLowerCase().includes(v.toLowerCase())); key = p ? 'B:' + p.id : null; }
+        return key ? claimProperty(life, key) : { message: `No property matches “${v}”.` };
+      },
+      t8: () => setClock(life, 8 * 60), t13: () => setClock(life, 13 * 60), t20: () => setClock(life, 20 * 60),
+      map: () => { townMap.open(); return { close: true }; },
+    },
+  });
+  addEventListener('keydown', (e) => {
+    if (String(e.key).toLowerCase() !== 'n' || e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.target.closest?.('input,textarea,select,[contenteditable]')) return;
+    if (!townMap.isOpen()) { e.preventDefault(); townMap.open(); }
+  });
   // Time of day: jumps the town clock (src/world/life.js) to the next part of the day.
   const TIMES = [[7 * 60, '🌅 Morning'], [12 * 60, '☀️ Midday'], [18 * 60 + 40, '🌇 Dusk'], [22 * 60, '🌙 Night']];
   function cycleTime() {
@@ -533,7 +708,15 @@ async function start() {
   $('btn-000').onclick = () => openPanel(emergencyPanel(life,{x:player.pos.x,z:player.pos.z}),guideSpot);
   $('btn-discoveries').onclick = () => openPanel(discoveryContent(), guideSpot);
   $('btn-wallet').onclick = () => openPanel(walletPanel(life, { go: (id) => { goPlace(id); return null; } }), guideSpot);
-  $('btn-help').onclick = () => { input.releaseMouse(); $('help').hidden = !$('help').hidden; };
+  $('btn-help').onclick = () => { closeSettings(); input.releaseMouse(); $('help').hidden = !$('help').hidden; };
+  $('btn-settings').onclick = () => {
+    input.releaseMouse();input.reset();
+    closePanel();npcChat.close();$('help').hidden=true;$('npc-roster').hidden=true;
+    $('settings').hidden=false;showSpeedSetting();
+    document.dispatchEvent(new Event('town:collapse-hud'));
+    speedSlider.focus();
+  };
+  $('settings-close').onclick = closeSettings;
   $('btn-npcs').onclick = () => { $('npc-roster').hidden = !$('npc-roster').hidden; input.reset(); };
   $('npc-roster-close').onclick = () => { $('npc-roster').hidden = true; };
   $('help-close').onclick = () => { $('help').hidden = true; };
@@ -989,26 +1172,28 @@ async function start() {
     }
     // While a game is open the town neither renders nor reacts, so the game gets the whole device.
     syncOverlayHud();
-    if (sleeping) { input.reset(); requestAnimationFrame(frame); return; }
+    if (sleeping) { drivingDashboard.update(null); input.reset(); requestAnimationFrame(frame); return; }
     if (playing) {
+      drivingDashboard.update(null);
       if (input.consume('back')) stopGame();
       input.takeLook(); for (const k of ['use', 'jump', 'map']) input.consume(k);
       requestAnimationFrame(frame);
       return;
     }
     if (input.consume('map')) setOverview(!overview);
-    if (input.consume('back')) { if (companion.isOpen()) companion.close(); else if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (yarns.isOpen()) yarns.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
+    if (input.consume('back')) { if (companion.isOpen()) companion.close(); else if (expedition.isOpen()) expedition.dismiss(); else if (npcChat.isOpen()) npcChat.close(); else if (yarns.isOpen()) yarns.close(); else if (!$('npc-roster').hidden) $('npc-roster').hidden = true; else if (panelOpen) closePanel(); else if (!$('settings').hidden) closeSettings(); else if (!$('help').hidden) $('help').hidden = true; else setOverview(false); }
     if(expedition.isOpen()){input.keys.clear();input.takeLook();input.pressed.delete('use');}
     if (overview) {
       camera.position.set(player.pos.x, 150, player.pos.z + 95); camera.lookAt(player.pos.x, 0, player.pos.z);
       input.takeLook(); input.consume('jump');
-    } else if (companion.isOpen() || expedition.isOpen() || panelOpen || npcChat.isOpen() || yarns.isOpen() || !$('npc-roster').hidden || !$('help').hidden) input.reset();
+    } else if (companion.isOpen() || expedition.isOpen() || panelOpen || npcChat.isOpen() || yarns.isOpen() || !$('npc-roster').hidden || !$('help').hidden || !$('settings').hidden) input.reset();
     else {
       const n=life.needsReport();
-      player.speedFactor=Math.max(0.45,1-(n.hunger>80?0.23:0)-(n.fatigue>75?0.32:0));
+      player.speedFactor=movementSpeedFactor(movementSpeed,n.hunger,n.fatigue);
       if(mode==='town'&&driving.driving) driving.update(dt);
       else player.update(dt,input,world);
     }
+    drivingDashboard.update(mode==='town'&&!overview?driving.activeVehicle():null);
     // Keep the table-service control in the always-visible needs strip on
     // phones with the rest of the HUD collapsed.
     tableOrder.hidden=!(player.seated && mode==='house' &&
@@ -1092,17 +1277,18 @@ async function start() {
       }
       // Villagers, the guide kiosk and the shop counters: pick the one the player is facing.
       nearPerson = null; let bestP = Infinity;
-      const consider = (c, reach) => {
+      const consider = (c, reach, bonus = 0) => {
         const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
         if (d > reach) return;
         tmp.copy(c.pos).sub(player.pos); tmp.y = 0;
         const facing = d < 0.01 ? 1 : tmp.normalize().dot(player.forward());
-        const score = d - 1.6 * facing;
+        const score = d - 1.6 * facing - (facing > 0.5 ? bonus : 0);
         if ((facing > 0.2 || d < 1.2) && score < bestP) { bestP = score; nearPerson = c; }
       };
       for (const p of townLife.people) if (!p.v.inside) consider(p, 2.6);
       consider(guideSpot, 2.6);
-      for (const sp of townLife.spots) consider({ ...sp, spot: sp }, 3.2);
+      // A shop door you are facing wins over a villager walking past or queuing beside it.
+      for (const sp of townLife.spots) consider({ ...sp, spot: sp }, 3.2, 1.5);
       nearTownSeat = !overview&&!driving.driving ? nearestSeat(townLife.seats,player.pos,player.forward(),2.4) : null;
       nearCar = !overview&&!driving.driving ? driving.nearest() : null;
       nearHouse = null; let best = 6;
@@ -1126,9 +1312,29 @@ async function start() {
           if (d.userData.open > 0.6) { enter(z.coordinate, true); break; }
         }
       }
+      // World-homes use the SAME actual front-door plane for entry and exit.
+      // The 195 houses have compact rooms inside their exterior footprints.
+      if(mode==='town' && !overview && !driving.driving){
+        for(const home of masterplan.homes){
+          if(countryEntrance(home,player.pos)){
+            enterCountryHome(home,true); break;
+          }
+        }
+      }
       // Walk into an actual 3D shop interior when crossing the open shopfront.
       // The outside facades are collision solids, so the transition happens
       // just in front of their door (not inside an inaccessible wall).
+      if(mode==='town' && !overview && !driving.driving){
+        for(const site of town.campuses || []){
+          const outsideWest=site.entryAxis==='west' &&
+            Math.abs(player.pos.z-site.entry.z)<1.3 &&
+            player.pos.x<site.entry.x-.20 && player.pos.x>site.entry.x-2.6;
+          const outsideNorth=site.entryAxis!=='west' &&
+            Math.abs(player.pos.x-site.entry.x)<1.3 &&
+            player.pos.z<site.entry.z-.20 && player.pos.z>site.entry.z-2.6;
+          if(outsideWest||outsideNorth){enterCampus(site.id,true);break;}
+        }
+      }
       if(mode==='town' && !overview && !driving.driving){
         for(const place of life.places.values()){
           if(atCivicEntrance(place,player.pos)){
@@ -1186,17 +1392,21 @@ async function start() {
       if (input.consume('use')) use();
     } else {
       // Inside doors swing open for the player and for residents walking through them.
-      for (const d of inside.doors) {
+      for (const d of inside.doors || []) {
+        if (!d?.userData?.centre || !d.rotation) continue; // Layout-only door descriptors are not animated Three.js meshes.
         const dist = Math.hypot(d.userData.centre.x - player.pos.x, d.userData.centre.z - player.pos.z);
         const residentNear = (inside.people || []).some((p) => Math.hypot(d.userData.centre.x - p.pos.x, d.userData.centre.z - p.pos.z) < 2.0);
-        const target = d.userData.privacy ? 0 : dist < 2.8 || residentNear ? 1 : 0; d.userData.open += (target - d.userData.open) * Math.min(1, dt * 5); d.rotation.y = d.userData.baseRot + d.userData.open * 1.5 * (d.userData.swing || 1);
+        const target = d.userData.privacy ? 0 : dist < 2.8 || residentNear ? 1 : 0;
+        const openness = Number.isFinite(d.userData.open) ? d.userData.open : 0;
+        d.userData.open = openness + (target - openness) * Math.min(1, dt * 5);
+        d.rotation.y = (d.userData.baseRot || 0) + d.userData.open * 1.5 * (d.userData.swing || 1);
       }
       const ex = inside.exitZone;
       const rear=inside.rearExitZone;
       // Generous exit area: the doorway, the last 1.3 m inside it and anywhere beyond it, centred on
       // the actual door, so a slow frame or the floor-change cooldown cannot carry the player past it.
       if(rear&&floorDoorCooldown<=0&&player.pos.x>rear.x0&&player.pos.x<rear.x1&&player.pos.z<rear.z1){leave(true,false,'rear');}
-      else if (ex && floorDoorCooldown <= 0 && Math.abs(player.pos.x - (ex.x0 + ex.x1) / 2) < 1.55 && player.pos.z > inside.rooms[0].z1 - 1.3) { if (inside.floors && inside.floorIndex > 0) changeFloor(inside.floorIndex - 1); else leave(true, true); }
+      else if (ex && inside.rooms?.[0] && floorDoorCooldown <= 0 && Math.abs(player.pos.x - (ex.x0 + ex.x1) / 2) < 1.55 && player.pos.z > inside.rooms[0].z1 - 1.3) { if (inside.floors && inside.floorIndex > 0) changeFloor(inside.floorIndex - 1); else leave(true, true); }
       else {
         nearThing = player.seated ? null : pickNear();
         nearNPC = null;
@@ -1239,6 +1449,12 @@ async function start() {
     }
     if (mode === 'town') input.consume('use');
     expedition.update(t,player,mode);
+    // One prompt at a time: the gold chest/relic bar only when E would open it, else the usual prompt.
+    if (mode === 'town' && !$('expedition-hint').hidden) {
+      const relic = expedition.nearby(player.pos), d = (o) => (o ? Math.hypot(o.pos.x - player.pos.x, o.pos.z - player.pos.z) : Infinity);
+      const relicWins = !driving.driving && !nearCar && !player.seated && !nearTownSeat && d(relic) <= d(nearNPC) && d(relic) <= d(nearPerson);
+      if (relicWins) $('prompt').hidden = true; else $('expedition-hint').hidden = true;
+    }
     mapTimer += dt; if (mapTimer > 0.2) { drawMap(); mapTimer = 0; }
     saveTimer += dt; if (saveTimer > 3) { save(); saveTimer = 0; }
     // Apply after selecting the new nearby prompt: never let it reappear over
@@ -1278,6 +1494,8 @@ async function start() {
     },
 
     houses: houses.map((h) => ({ coordinate: h.coordinate, name: h.name })),
+    campuses:()=>town.campuses.map(s=>({id:s.id,name:s.name,door:s.entry,scaleStatus:s.scaleStatus,wings:s.wings})),
+    enterCampus,
     npcs: streetNPCs.map((x) => ({ id: x.npc.id, name: x.npc.name, coordinate: x.npc.coordinate })),
     npcChat: () => ({ open: npcChat.isOpen(), id: npcChat.active() }),
     talkTo: (id) => npcChat.show(id),
@@ -1344,6 +1562,9 @@ async function start() {
     // Stands at the Town Guide kiosk, facing it.
     meetGuide() { if (mode === 'house') leave(false); player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return 'guide'; },
     goPlace,
+    driveDashboard:()=>drivingDashboard.getState(),
+    driveHeadlights:()=>driving.headlightStatus(),
+    estateLights:()=>({count:masterplan.lampPositions.length,sourceCount:town.streetLighting.sourceCount,visible:masterplan.lampHeads.material.emissiveIntensity>0}),
     driveDiagnostics:()=>({
       input:input.movement(),touch:input.touch,
       active:driving.activeVehicle()?.registration||null,
@@ -1356,6 +1577,8 @@ async function start() {
     stepVehicle:(seconds)=>driving.update(seconds),
     shops:()=>[...life.places.values()].map(p=>({id:p.id,name:p.name,kind:p.kind,side:p.side||'north',expansion:!!p.expansion,door:{x:p.x,z:p.door.z}})),
     enterShop,
+    enterCountryHome:(id)=>{const h=masterplan.homes.find(x=>x.parcelId===id||x.country===id||x.address===id);return h?enterCountryHome(h):false;},
+    countryHomes:()=>masterplan.homes.map(h=>({id:h.parcelId,address:h.address,country:h.country,frontZ:h.frontZ,x:h.x,facesNorth:h.facesNorth})),
     setFloor:(i)=>changeFloor(i),
     // Where the town's villager figures are drawn (they keep moving while the player is indoors).
     // The named street characters: where they are and whether they are out in town.
@@ -1374,7 +1597,7 @@ async function start() {
       ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
       // Jumps the clock (tests): everyone re-plans their day from scratch.
       setWeather(w) { life.civic.weather = w; },
-      setTime(minute) { life.minute = minute; life.stats = life.freshStats(); for (const v of life.villagers) { v.step = null; v.path = []; v.queue = []; v.doneToday = {}; } },
+      setTime(minute) { life.minute = minute; life.stats = life.freshStats(); for (const v of life.villagers) { v.step = null; v.path = []; v.queue = []; v.doneToday = {}; } life.startShiftsInProgress(); },
       run(minutes) { for (let m = 0; m < minutes; m += 0.5) life.tick(0.5); },
       // A villager's live route and plan, for diagnosing where people walk.
       route: (name) => { const v = life.villagers.find((x) => x.name === name); return v && { x: v.x, z: v.z, bike: !!v.bike, inside: v.inside, path: v.path.map((p) => ({ x: p.x, z: p.z, detour: !!p.detour })), step: v.step && { kind: v.step.kind, at: v.step.at, target: v.step.target } }; },
@@ -1386,6 +1609,8 @@ async function start() {
     stopGame: () => stopGame(),
     answer(i) { const b = $('panel-actions').querySelectorAll('button')[i]; if (b) b.click(); return !!b; },
     closePanel,
+    townMap,
+    cheats,
   };
 
   $('loading').hidden = true;

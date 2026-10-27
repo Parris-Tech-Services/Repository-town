@@ -1,6 +1,8 @@
 import { buildPowerInterior } from './power-interior.js';
 import { buildBusInterchangeInterior } from './bus-interchange-interior.js';
 import { buildVisitorInformationInterior } from './visitor-information-interior.js';
+import { buildAgedCareInterior } from './aged-care-interior.js';
+import { buildCemeteryOfficeInterior } from './cemetery-office-interior.js';
 import { buildDepotInterior } from './depot-interior.js';
 import { buildWaterworksInterior } from './waterworks-interior.js';
 import { buildWastewaterInterior } from './wastewater-interior.js';
@@ -33,6 +35,7 @@ import { buildSupermarketInterior } from './supermarket-interior.js';
 import { buildDentalInterior } from './dental-interior.js';
 import { buildPathologyInterior } from './pathology-interior.js';
 import { buildClothingInterior } from './clothing-interior.js';
+import { buildNurseryInterior } from './nursery-interior.js';
 import { buildFarmInterior, FARM_SHED_IDS } from './farm-interior.js';
 import {buildSoyInterior} from './soy-interior.js';
 import { buildTradeInterior } from './trade-interiors.js';
@@ -97,6 +100,8 @@ const BASE_W=14, BASE_D=18, FRONT=6, BACK=-12, EDGE=7;
 export function buildCivicInterior(site,makeLabel,life=null) {
   if(site.id==='busstop')return buildBusInterchangeInterior(site,makeLabel);
   if(site.id==='visitorcentre')return buildVisitorInformationInterior(site,makeLabel);
+  if(site.id==='agedcare')return buildAgedCareInterior(site,makeLabel);
+  if(site.id==='cemetery')return buildCemeteryOfficeInterior(site,makeLabel);
   // A family's home must never regress to the single-room retail fallback.
   if(site.id==='farmhouse')return buildFarmhouseInterior(site,makeLabel);
   if(['soyfarm','soyplant'].includes(site.id))return buildSoyInterior(site,makeLabel,life);
@@ -109,6 +114,7 @@ export function buildCivicInterior(site,makeLabel,life=null) {
   if(site.id==='dentist')return buildDentalInterior(site,makeLabel);
   if(site.id==='pathology')return buildPathologyInterior(site,makeLabel);
   if(site.id==='clothing')return buildClothingInterior(site,makeLabel);
+  if(site.id==='nursery')return buildNurseryInterior(site,makeLabel);
   if(['realestate','dealership','mechanic'].includes(site.id))return buildTradeInterior(site,makeLabel);
   const [roomTitle,deskName,featureName,accent,deskInfo,featureInfo] =
     FITTINGS[site.id] || (site.expansion

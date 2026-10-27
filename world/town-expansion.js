@@ -263,14 +263,14 @@ export const EXPANSION_SITES=Object.freeze([
     "row": 7,
     "side": "north",
     "kind": "health",
-    "style": "health",
+    "style": "agedcare",
     "priority": "P2",
     "staffRole": "aged care coordinator",
-    "description": "Aged-care support coordination",
+    "description": "Fictional two-bedroom aged-care household annex: homelike lounge and dining, resident ensuites, care-staff handover",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
-    "constructionStage": "2026 massing shell; interior detail pending",
+    "constructionStage": "2026 research-based small-household interior/exterior; not a licensed or surveyed care home",
     "taskId": "RTBUILD-016"
   },
   {
@@ -1150,11 +1150,11 @@ export const EXPANSION_SITES=Object.freeze([
     "style": "heritage",
     "priority": "P1",
     "staffRole": "cemetery officer",
-    "description": "Cemetery records and small memorial garden; burial grounds need further land",
+    "description": "Dignified memorial garden office, private family consultation and secure records enquiry; no burial plots on this narrow lot",
     "opens": 480,
     "closes": 1050,
     "expansion": true,
-    "constructionStage": "2026 massing shell; interior detail pending",
+    "constructionStage": "2026 researched memorial office model complete; actual cemetery consents and records not simulated",
     "taskId": "RTBUILD-068"
   },
   {

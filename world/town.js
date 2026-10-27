@@ -5,6 +5,9 @@ import { Builder } from './builder.js';
 import { buildExterior } from './exterior.js';
 import { exteriorColliders } from './exterior-collision.js';
 import { houseEntranceZone } from './house-entrance.js';
+import { buildYeovalCampus } from './yeoval-campus.js';
+import { buildBrackenCampus } from './bracken-campus.js';
+import { buildOutskirts } from './town-planning.js';
 
 // Town layout: 26 columns (A–Z) × 8 rows (streets). Every house faces +z onto its
 // street. Rows are merged into one mesh each so the whole town is ~10 draw calls.
@@ -32,6 +35,9 @@ export function buildTown(scene, houses, streets) {
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.06;
   group.add(ground);
+  // Southern concept reserves and the disconnected concept strips are superseded by the built
+  // master plan (src/world/masterplan-built.js), which main.js adds with its labels.
+  const outskirts = buildOutskirts(group, { omitParcels: ['S-R1', 'S-AG1', 'S-AG2'], roads: false });
 
   const deco = new Builder();
   for (let r = 0; r < 8; r++) {
@@ -58,7 +64,7 @@ export function buildTown(scene, houses, streets) {
   for (let c = 0; c <= COLS; c += 5) deco.box(0x55595f, 7, 0.035, depth - 20, (c - COLS / 2) * LOT_X, 0.018, 0);
   // Border trees frame the town and hide the ground edge.
   for (let i = 0; i < 70; i++) {
-    for (const z of [-depth / 2 - 6, depth / 2 + 6]) { const x = -width / 2 + i * width / 70; deco.cyl(0x6a4a2a, 0.3, 3, x, 1.5, z); deco.ball([0x4e8a46, 0x5a9a50, 0x467e40][i % 3], 2.2, x, 4.2, z); }
+    for (const z of [-371, depth / 2 + 6]) { const x = -width / 2 + i * width / 70; deco.cyl(0x6a4a2a, 0.3, 3, x, 1.5, z); deco.ball([0x4e8a46, 0x5a9a50, 0x467e40][i % 3], 2.2, x, 4.2, z); }
   }
   // Street lamps on both footpaths: poles merge into the street mesh, the lamp heads into
   // one emissive mesh plus a bounded pool of real downward lights near the player.
@@ -93,7 +99,7 @@ export function buildTown(scene, houses, streets) {
   const lampMat = new THREE.MeshLambertMaterial({ color: 0xfff1c8, emissive: 0xffd27a, emissiveIntensity: 0 });
   const lamps = new THREE.Mesh(Builder.merge(heads.glass), lampMat);
   group.add(lamps);
-  const lightBudget = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 2 : STREET_LIGHT_BUDGET;
+  const lightBudget = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches ? 4 : STREET_LIGHT_BUDGET;
   const streetLighting = createStreetLighting(group, lampSources, lightBudget);
 
   // One mesh per house: frustum culling then skips houses behind or beyond the fog.
@@ -142,6 +148,8 @@ export function buildTown(scene, houses, streets) {
 
   const windowMats = panes.map(() => new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xffb45a, emissiveIntensity: 0 }));
   panes.forEach((p, i) => { const g = Builder.merge(p); if (g) group.add(new THREE.Mesh(g, windowMats[i])); });
+  let estateLighting=null;
+  function attachEstateLighting(estate){estateLighting=estate;streetLighting.addSources(estate.streetLampSources);}
   // dark: 0 by day … 1 at night. minute: town clock, for bedtimes and early risers.
   function setNight(dark, minute, eye = {x:0,z:0}, powered = true,perHousePower=()=>powered) {
     const on = [0,1,2].map(cohort=>householdLightingOn(minute,cohort));
@@ -149,9 +157,12 @@ export function buildTown(scene, houses, streets) {
     for(const w of pilotWindows)w.material.emissiveIntensity=perHousePower(w.id)?(on[w.cohort]?dark*.95:dark*.05):0;
     lampMat.emissiveIntensity = powered ? 1.2 * lightingLevel(dark) : 0;
     streetLighting.update(eye, dark, powered);
+    // Estate bulb meshes and the original town rig obey one shared clock/grid.
+    estateLighting?.setNight(dark, powered);
   }
 
-  return { group, ground, colliders, lots, doors, doorZones, streets, guidePos: new THREE.Vector3(0, 0, guideZ), bounds: { width, depth }, streetLighting, lampSources, setNight };
+  const campuses = [buildYeovalCampus(group, colliders),buildBrackenCampus(group,colliders)];
+  return { group, ground, colliders, campuses, lots, doors, doorZones, streets, guidePos: new THREE.Vector3(0, 0, guideZ), bounds: { width, depth }, outskirts, streetLighting, lampSources, setNight, attachEstateLighting };
 }
 
 // Street-name signs at both ends of each street, plus the Town Guide sign near spawn.
