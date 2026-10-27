@@ -153,3 +153,5 @@ jobs:
 # Dashboard Pages verification b9af999d15f4bb320b04c508c8dff931e11d7770: synchronise current canonical main including car gauges and Show/Hide HUD after full independent checks.
 
 # Soundscape and 10-vehicle garage release verification, source JoshMemory/main 27 October 2026. Full tests and desktop/Android smoke required before mirror publication.
+
+# Retry 27 October 2026 soundscape release after fixing missing persisted-track preference fallback in work-audio regression.
