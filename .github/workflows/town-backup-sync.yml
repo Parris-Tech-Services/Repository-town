@@ -166,3 +166,5 @@ jobs:
 # Research-linked Bracken House and Yeoval UPA care cohorts, live 24/7 staffing, resident render tests and southside staff housing release 2026-10-27.
 
 # One-off verified care-population release retry after removing research-repository identifiers from public runtime code. Privacy gate remains enforced.
+
+# 2026-10-27 UTC verified catch-up request: include JoshMemory main 6caf278697242eda32bd7ce5805b09c3b54f732e and all recent merged care-population and arts-studio fixes; fail closed on release/browser tests.
