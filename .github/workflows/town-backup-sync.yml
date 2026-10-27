@@ -92,6 +92,7 @@ jobs:
           node tests/webgl-playtest.mjs
           TOWN_URL=http://127.0.0.1:8091/ node tests/pub-id-browser.mjs
           TOWN_URL=http://127.0.0.1:8091/ node tests/aged-care-campuses-live-browser.mjs
+          TOWN_URL=http://127.0.0.1:8091/ node tests/resident-style-browser.mjs
       - uses: actions/upload-artifact@v4
         if: always() && steps.verified.outputs.changed == 'true'
         with:
@@ -172,3 +173,5 @@ jobs:
 # 2026-10-27 final browser-test repair follow-up: pin JoshMemory main 2e97af7929a626ee71845d099489c825d69cf0cf, verify both Bracken and Yeoval by keyboard on desktop and mobile before publishing.
 
 # 2026-10-27 verified source catch-up after Chromium starter-phase race fix: build JoshMemory/main, execute full tests and mobile WebGL, publish exact source fingerprint only on pass.
+
+# 27 Oct 2026: release pin and live WebGL validation for compact five-character CC0 KayKit storybook style, shared animations and restored classic fallback.
