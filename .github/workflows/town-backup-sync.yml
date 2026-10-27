@@ -151,3 +151,5 @@ jobs:
 # Rebuild mirror for verified source post-office architecture merge 1617742d2babe68a53328aa5908a17bab78c64c4; preserve live audit gate.
 
 # Dashboard Pages verification b9af999d15f4bb320b04c508c8dff931e11d7770: synchronise current canonical main including car gauges and Show/Hide HUD after full independent checks.
+
+# Soundscape and 10-vehicle garage release verification, source JoshMemory/main 27 October 2026. Full tests and desktop/Android smoke required before mirror publication.
