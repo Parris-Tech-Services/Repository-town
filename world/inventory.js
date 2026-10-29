@@ -5,6 +5,10 @@
 export const ITEM_TYPES = Object.freeze({
   torch: { name: 'Torch', icon: '🔦', equip: true,
     about: 'A rechargeable LED torch. Equip it, then switch it on (F, or the button here) to light the way at night and in dark rooms.' },
+  hatchet: { name: 'Hatchet', icon: '🪓', equip: true,
+    about: 'A steel hatchet, bought at the hardware store or taken free from the Woodlot tool rack. Walk up to a tree at the Woodlot (north of the railway) and press E or ✋ to chop.' },
+  tinderbox: { name: 'Tinderbox', icon: '🧰', equip: false,
+    about: 'Flint, steel and dry tinder. Use it on logs in your bag to light a fire where you stand.' },
 });
 
 const state = (me) => { me.items ??= []; me.equipped ??= null; me.torchOn ??= false; return me; };
@@ -12,7 +16,11 @@ export function items(me) { return state(me).items; }
 export function hasItem(me, type) { return items(me).some((i) => i.type === type); }
 export function addItem(me, type) {
   if (!ITEM_TYPES[type]) throw new Error('Unknown item ' + type);
-  const s = state(me), id = `${type}-${s.items.length + 1}-${Date.now().toString(36)}`;
+  const s = state(me);
+  // A persisted sequence avoids reusing an identity after dropping an item.
+  const used = new Set([...s.items, ...(s.groundItems || [])].map(i => i.id));
+  s.itemSequence = Number.isSafeInteger(s.itemSequence) && s.itemSequence >= 0 && s.itemSequence < Number.MAX_SAFE_INTEGER ? s.itemSequence : 0;
+  let id; do { id = `${type}:guest:${++s.itemSequence}`; } while (used.has(id));
   s.items.push({ id, type });
   return id;
 }
@@ -31,10 +39,5 @@ export function toggleTorch(me) {
   return s.torchOn ? 'Torch on.' : 'Torch off.';
 }
 export function torchLit(me) { const s = state(me); return s.torchOn && equippedType(s) === 'torch'; }
-export function dropItem(me, id) {
-  const s = state(me), i = s.items.findIndex((x) => x.id === id);
-  if (i < 0) return 'Nothing to drop.';
-  if (s.equipped === id) unequip(s);
-  const [it] = s.items.splice(i, 1);
-  return `You leave the ${ITEM_TYPES[it.type].name.toLowerCase()} behind.`;
-}
+// Dropping requires a validated world destination; inventory alone must never delete an item.
+export function dropItem() { return 'Choose a clear world position before dropping an item.'; }

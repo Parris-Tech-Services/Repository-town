@@ -21,6 +21,7 @@ import { orderCafe, serveCafe } from './cafe-menu.js';
 import { bicycleClear, cyclingRoute } from './bicycle-safety.js';
 import { pedestrianDetour,canFinishNearOccupiedDoor } from './pedestrian-navigation.js';
 import { routeProgress, escapeCrowdWaypoint, clearPedestrianSegment } from './pedestrian-progress.js';
+import { callInMissingStaff } from './staff-callin.js';
 import { distributePower, townPowerDemands, POWER_LINE_IDS, GRID_FAULT_COST } from './power-grid.js';
 import { initialisePublicLife, attendPublicForum, updatePublicForum, civicDialogue } from './public-forum.js';
 import {initialEmergencyState,emergencyState,callTripleZero,advanceEmergency,caseReport,justiceSummary} from './emergency-justice.js';
@@ -34,7 +35,7 @@ import { initialiseProperties, upgradePropertyAddresses, propertyReport, buyProp
 import { ensureTenancies, leaseReport, commercialRentDay, issueCommercialDisclosure, renewCommercial, reviewCommercialRent, tenancyNotice, applyTribunal, hearing, enforcePossession, leaseOverview } from './lease-law.js';
 import { exchangePurchase, rescindContract, settlePurchase, contractReport, contractQuote } from './property-contracts.js';
 import { initialiseVehicles, motorReport, buyVehicle, serviceVehicle, refuelVehicle, renewRegistration, sellVehicle, motorDay } from './vehicles.js';
-import { initialiseTradeEducation, advanceTradeEducation, advanceTownTradeOperations } from './trade-education.js';
+import { initialiseTradeEducation, advanceTradeEducation, advanceTownTradeOperations, HARDWARE } from './trade-education.js';
 import { MAYOR_CANDIDATES, createGovernment, civicElection, castCivicVote, submitRequest, requestFeeder, proposeMotion, councilMeeting, advanceCivicWork, budgetRevenue, restoreCivic, govSummary, maintainServices } from './government.js';
 // Town life simulation: the clock, farms, the mill and bakery, shops, trucks, the post,
 // and villagers with jobs, hunger, pantries, wallets and daily routines. Pure logic (no
@@ -329,7 +330,16 @@ export const VENUE_MENU = Object.freeze({
 });
 
 const plural = (unit, n) => (n === 1 ? unit : /[sx]$|ch$/.test(unit) ? `${unit}es` : unit === 'loaf' ? 'loaves' : `${unit}s`);
-export const amount = (good, n) => (GOODS[good].unit === 'dozen' ? `${n} dozen ${GOODS[good].name}` : `${n} ${plural(GOODS[good].unit, n)} of ${GOODS[good].name}`);
+// The bag also holds things from outside GOODS (building materials from the hardware counter).
+// They need a name too: one failed lookup here used to break every counter panel that lists the bag.
+const goodInfo = (good) => GOODS[good] || (HARDWARE[good] ? { name: HARDWARE[good].name.toLowerCase(), unit: 'item' } : { name: String(good).replace(/_/g, ' '), unit: 'item' });
+export const amount = (good, n) => {
+  const g = goodInfo(good);
+  if (g.unit === 'dozen') return `${n} dozen ${g.name}`;
+  // "1 pie", not "1 pie of pies", when the name is just the unit itself.
+  if (g.name === plural(g.unit, 2)) return `${n} ${plural(g.unit, n)}`;
+  return `${n} ${plural(g.unit, n)} of ${g.name}`;
+};
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 // Player money is whole cents; plain float subtraction leaves values like 1.0099999999999998.
 const cents = (n) => Math.round(n * 100) / 100;
@@ -598,8 +608,10 @@ export class TownLife {
 
   // Test hook only (__town.life.setTime): after a clock jump, anyone whose shift is under way
   // resumes at work instead of everyone re-planning from home. New games keep real commutes.
-  startShiftsInProgress() {
+  startShiftsInProgress(onlyIds = null) {
+    const selected = onlyIds ? new Set(onlyIds) : null;
     for (const v of this.villagers) {
+      if (selected && !selected.has(v.id)) continue;
       const site = v.work !== 'home' && this.places.get(v.work);
       const shift=this.shiftToday(v);
       if (!site || !shift || !(this.minute >= shift.start && this.minute < shift.end) || ['student', 'retired'].includes(v.job)) continue;
@@ -678,6 +690,7 @@ export class TownLife {
     tickPubUtilities(this,minutes);
     advanceTownTradeOperations(this,minutes);
     advanceEmergency(this);
+    callInMissingStaff(this, minutes);
     for (const o of readyOrders(this)) this.collectOrder(o);
     for (const v of this.villagers) this.liveVillager(v, minutes);
     // All walkers, shop visitors and on-duty staff retain physical space.
@@ -993,6 +1006,15 @@ export class TownLife {
     me[from] -= m; me[to] += m;
     noteBank(this, `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}.`); receipt(this, 'bank', `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}`, 0);
     return `${op === 'deposit' ? 'Deposited' : 'Withdrew'} $${m}. Wallet $${me.wallet}, savings $${me.bank}.`;
+  }
+  // The ATM in the bank's front wall works around the clock: withdrawals only, as in a real
+  // town, so a visitor short of cash for the hotel at night isn't stuck until 9:00.
+  atm(n) {
+    const me = this.civic.player, m = Math.min(n, me.bank || 0);
+    if (m <= 0) return `Your savings balance is $${me.bank || 0}: nothing to withdraw.`;
+    me.bank -= m; me.wallet += m;
+    noteBank(this, `ATM withdrawal $${m}.`); receipt(this, 'bank', `ATM withdrawal $${m}`, 0);
+    return `The ATM pays out $${m}. Wallet $${me.wallet}, savings $${me.bank}.`;
   }
   propertyReport() { return propertyReport(this); }
   contractQuote(id) {return contractQuote(this,id);}
@@ -1318,7 +1340,10 @@ export class TownLife {
       ['sheep', 'lamb', 'butcher'], ['sheep', 'lamb', 'pub'], ['sheep', 'lamb', 'bakery'],
       ['depot', 'coffee', 'cafe'], ['depot', 'coffee', 'store'], ['depot', 'tea', 'store'], ['depot', 'tea', 'cafe'], ['orchard', 'fruit', 'cafe'], ['depot', 'parcel', 'post'],
       ['depot', 'fuel', 'power'], ['depot', 'ore', 'foundry'], ['recycling', 'scrap', 'foundry'], ['foundry', 'parts', 'hall'],
-    ];
+      // The Corner Grocer (F7-N): supplied from the same producers as the General Store.
+      ['dairy', 'milk', 'supermarket'], ['coop', 'eggs', 'supermarket'], ['mill', 'flour', 'supermarket'], ['bakery', 'bread', 'supermarket'],
+      ['garden', 'veg', 'supermarket'], ['orchard', 'fruit', 'supermarket'], ['depot', 'tea', 'supermarket'], ['depot', 'coffee', 'supermarket'],
+    ].filter(([from, , to]) => this.place(from) && this.place(to));
     let best = null;
     for (const [from, good, to] of routes) {
       const src = this.place(from), dst = this.place(to);
@@ -1460,10 +1485,13 @@ export class TownLife {
       ? Math.abs(v.home.door.x-publicSite.front.x)+Math.abs(v.home.door.z-publicSite.front.z)+25 : 0;
     const travelMinutes=Math.ceil(routeDistance/((routeDistance>160?BIKE:WALK)*SEC_PER_MIN)*1.45);
     const preOpenLead=receptionWorker?Math.min(200,Math.max(35,travelMinutes+25)):0;
-    const wake = receptionWorker && shiftStart>=6*60
+    const wake = shiftStart >= 12*60 ? Math.min(shiftStart-240,9*60+30) // evening shifts sleep in, not up at 06:30 till midnight
+      : receptionWorker && shiftStart>=6*60
       ? Math.min(shiftStart-75,6*60+30,Math.max(3*60,shiftStart-preOpenLead-40))
       : Math.min(shiftStart-75,6*60+30);
-    const asleep = m >= sleepFrom || m < wake || (v.fatigue>=94 && m >= shiftEnd);
+    // Eight hours before the alarm: a 04:45 riser was still up until 22:30 and tired at work.
+    const bedtime = shiftEnd >= 22 * 60 ? sleepFrom : Math.max(19 * 60 + 30, Math.min(sleepFrom, wake + 16 * 60));
+    const asleep = m >= bedtime || m < wake || (v.fatigue>=94 && m >= shiftEnd);
     if (asleep) return this.goThen(v, home, { kind: 'sleep', at: 'home', until: wake < m ? wake + 24 * 60 : wake, activity: 'asleep at home' });
     if (v.hunger>=82 && m>=wake && !v.doneToday.breakfast) v.memory='very hungry, looking for breakfast';
     // A shower before breakfast, when there's time before work.
@@ -1495,6 +1523,9 @@ export class TownLife {
       });
     }
     if (v.job === 'security guard' && working) {
+      // A meal break three hours into the round (guards used to patrol all shift without eating).
+      const guardMeal = shiftStart >= 14*60 ? 'dinner' : 'lunch';
+      if (!v.doneToday[guardMeal] && m >= shiftStart + 180) { v.doneToday[guardMeal] = true; this.workMeal(v, guardMeal); }
       // Paid rounds on public pavements, not police duties or unrestricted private access.
       const checkpoints = shiftStart < 12*60
         ? ['securityhq','bank','store','cafe','police','pub','securityoffice']
@@ -1517,7 +1548,13 @@ export class TownLife {
     const lateShift = shiftStart >= 14*60;
     // Long day shifts that run past 20:30 get a second, dinner break after lunch, staggered too.
     const eveningBreak = !lateShift && shiftEnd >= 20*60+30 && v.doneToday.lunch && !v.doneToday.dinner;
-    const lunchAt = lateShift ? shiftStart+180 : eveningBreak ? 18*60+rank*45 : Math.max(shiftStart+75,Math.min(shiftEnd-45,11*60+15+rank*120));
+    let lunchAt = lateShift ? shiftStart+180 : eveningBreak ? 18*60+rank*45 : Math.max(shiftStart+75,Math.min(shiftEnd-45,11*60+15+rank*120));
+    // Don't book lunch before anyone is rostered to cover it: the Security Office's 08:00 receptionist
+    // was due at 11:15, but relief starts at 12:00, so lunch was a "packed lunch" from an empty pantry.
+    if (!lateShift && !eveningBreak) {
+      const coverFrom = Math.min(...colleagues.filter(o=>o!==v && o.end>lunchAt+75 && o.start<shiftEnd-60).map(o=>o.start));
+      if (Number.isFinite(coverFrom) && coverFrom>lunchAt && coverFrom+20<=shiftEnd-60) lunchAt = coverFrom+20;
+    }
     // Lunch is not a magic instant dismissal of reception. Workers can defer
     // it when the only other employee is travelling, shopping or off duty.
     // The stagger is a preference; cover is checked against real NPC presence.
@@ -1551,8 +1588,7 @@ export class TownLife {
       // skipping lunch or locking the shop.
       if (working && lunchDue && !actualCover && m >= lunchAt + 45 && v.work !== 'home') {
         v.doneToday[mealKey] = true;
-        const meal = this.cookable(v, 'lunch');
-        if (meal) { this.eat(v, meal[0], meal[1]); v.memory = `ate ${meal[0]} behind the counter at work`; }
+        this.workMeal(v, mealKey);
       }
       if (v.work === 'home') return this.goThen(v, home, { kind: 'work', at: 'home', until: shiftEnd, activity: 'coding at home' });
       if (v.job === 'postie' && !v.doneToday.round && (this.place('post').stock.parcel || 0) > 0) return this.postRound(v);
@@ -2005,6 +2041,16 @@ export class TownLife {
   }
 
   // Buys one item and eats it on the spot (a roll for breakfast, a pie for lunch).
+  // A meal eaten on the job: something packed from the pantry, or else a roll or pie fetched from
+  // whichever food counter is open (not "lunch" from an empty lunchbox).
+  workMeal(v, mealKey) {
+    const meal = this.cookable(v, 'lunch');
+    if (meal) { this.eat(v, meal[0], meal[1]); v.memory = `ate ${meal[0]} on the job`; return; }
+    const fetch = [['bakery', 'pie'], ['bakery', 'bread'], ['store', 'bread'], ['cafe', 'bread']].find(([id, good]) =>
+      shopService(this, this.place(id)).available && ((id === 'bakery' ? this.place(id).out : this.place(id).stock)[good] || 0) > 0);
+    if (fetch && v.wallet >= GOODS[fetch[1]].price) { this.snack(v, fetch[0], fetch[1]); v.memory = `had ${fetch[1] === 'pie' ? 'a pie' : 'a roll'} from ${theName(this.place(fetch[0]))} for ${mealKey} at work`; }
+  }
+
   snack(v, shopId, good) {
     const shop = this.place(shopId), src = shopId === 'bakery' ? shop.out : shop.stock, price = GOODS[good].price;
     const service = shopService(this, shop);
@@ -2105,7 +2151,7 @@ export class TownLife {
   // Saves just what matters to resume tomorrow where the town left off.
   snapshot() {
     const pick = (o, keys) => { const r = { id: o.id }; for (const k of keys) if (o[k] !== undefined) r[k] = o[k]; return r; };
-    const state = { saveVersion:2, seed: this.seed, rngState: this.rand.getState(), day: this.day, minute: this.minute, social:this.social, powerGridEvents:this.powerGridEvents, powerGridEventSeq:this.powerGridEventSeq, civic: this.civic, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth]), villagers: this.villagers.map((v) => [v.id, v.larder, v.wallet, v.lastMeal, v.meals, v.hunger, v.fatigue, v.restedMinutes, v.wageArrears || 0, v.rateArrears || 0, v.housingArrears || 0]), hotelBookings:this.place('hotel').bookings,
+    const state = { saveVersion:2, staffRestorationVersion:1, seed: this.seed, rngState: this.rand.getState(), day: this.day, minute: this.minute, social:this.social, powerGridEvents:this.powerGridEvents, powerGridEventSeq:this.powerGridEventSeq, civic: this.civic, places: [...this.places.values()].map((p) => [p.id, p.stock, p.out, p.till, p.growth]), villagers: this.villagers.map((v) => [v.id, v.larder, v.wallet, v.lastMeal, v.meals, v.hunger, v.fatigue, v.restedMinutes, v.wageArrears || 0, v.rateArrears || 0, v.housingArrears || 0]), hotelBookings:this.place('hotel').bookings,
       sim: { events: this.events, stats: this.stats, yesterday: this.yesterday || null, villagers: this.villagers.map((v) => ({ ...pick(v, SIM_VILLAGER_FIELDS), wageArrears: v.wageArrears || 0, rateArrears: v.rateArrears || 0, housingArrears: v.housingArrears || 0 })), trucks: (this.trucks || []).map((t) => pick(t, SIM_TRUCK_FIELDS)), parcels: this.parcels || [] } };
     return JSON.parse(JSON.stringify(state));
   }
@@ -2157,6 +2203,27 @@ export class TownLife {
       for (const saved of sim.villagers) { const cur = this.villagers.find((x) => x.id === saved.id); for (const k of SIM_VILLAGER_FIELDS) if (Object.prototype.hasOwnProperty.call(saved, k)) cur[k] = saved[k]; else delete cur[k]; }
       for (const saved of sim.trucks) { const cur = this.trucks.find((x) => x.id === saved.id); for (const k of SIM_TRUCK_FIELDS) if (Object.prototype.hasOwnProperty.call(saved, k)) cur[k] = saved[k]; else delete cur[k]; }
       this.parcels = sim.parcels;
+      // Older saves predate the later real, rostered shop attendants. Those
+      // appended villagers are born at home when a historical save is loaded;
+      // without catch-up a Monday 10:00 customer finds a fully rostered but
+      // empty hardware shop until newcomers finish an entire commute.
+      // Catch up ONLY workers absent from that save. Never teleport a saved
+      // villager or rewrite their real position, travel or household.
+      if (s.staffRestorationVersion !== 1) {
+      const restoredIds = new Set(sim.villagers.map(v => v.id));
+      const catchUp = this.villagers.filter(v => {
+        if (!restoredIds.has(v.id)) return true;
+        // Older saves also sometimes record a scheduled shop worker still
+        // asleep at home well after opening. Resume only stale at-home shifts,
+        // never an employee genuinely en route, serving, or on a meal break.
+        if (v.work !== 'hardware' || (v.path?.length || 0) > 0) return false;
+        const shift = this.shiftToday(v);
+        return s.staffRestorationVersion !== 1 && !!shift &&
+          this.minute >= shift.start + 60 && this.minute < shift.end &&
+          (!v.step || (v.step.at === 'home' && ['sleep','idle','shower','cook'].includes(v.step.kind)));
+      });
+      if (catchUp.length) this.startShiftsInProgress(catchUp.map(v => v.id));
+      }
     }
     for (const v of this.villagers) { if (!Array.isArray(v.larder)) v.larder = null; ensureHousehold(v); }
     if(this.marriages.length)reconcileSpouseHouseholds(this.villagers);

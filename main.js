@@ -1,3 +1,6 @@
+import {groundItems,seedGuideTorch,pickupItem,dropOwnedItem,ITEM_REACH} from './world/item-actions.js';
+import {createGroundItemsView} from './world/ground-items-view.js';
+import {pickInteriorInteraction} from './engine/interaction-picker.js';
 import {createPubFloorStack,pubExpansionServices} from './world/pub-floors.js';
 import {pubFloorRefusal,recordPubLiftTrip,PUB_LEVELS} from './world/pub-expansion-state.js';
 import {pubExpansionPanel} from './ui/pub-expansion-panel.js';
@@ -59,7 +62,7 @@ import { npcBehaviour } from './ui/npc.js';
 import { sceneFromRoom } from './ui/scene-awareness.js';
 import { mountNPCChat } from './ui/npc-chat.js';
 import { mountTownYarns } from './ui/yarns.js';
-import { makePerson, Walker, houseWander, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
+import { makePerson, Walker, houseWander, rankKitchens, freeSpot, placeTownNPCs, animateNPCs, initialiseNPCWorksites } from './world/npcs.js';
 import {makeDistinctPerson} from './world/npc-wardrobe.js';
 import { separatePedestrians, steerPedestrians } from './world/pedestrian-spacing.js';
 import { createTownLife } from './world/townlife.js';
@@ -70,6 +73,12 @@ import { buildRoadSigns } from './world/road-signs.js';
 import { buildFarmersMarket, stallPanel, buyAtStall, marketNotice } from './world/farmers-market.js';
 import { addItem, equip, toggleTorch, torchLit, equippedType } from './world/inventory.js';
 import { inventoryPanel } from './ui/inventory-panel.js';
+import { skillsPanel } from './ui/skills-panel.js';
+import { buildWoodlot } from './world/woodlot.js';
+import { createGameTick, CHOP_TICKS, LIGHT_TICKS, LIGHT_GIVE_UP } from './world/game-tick.js';
+import { findPath } from './world/tap-path.js';
+import { createHatchetView } from './world/hatchet-view.js';
+import { canChop, canLight, swing, lightFire as lightLogs, isStump, skillsReport, takeRackTools, TREES } from './world/skills.js';
 import { buildCivilWorks } from './world/civil-works.js';
 import { nearestSeat } from './world/seats.js';
 import { furniturePanel } from './ui/furniture.js';
@@ -83,11 +92,35 @@ import { placePanel, ledgerPanel, guidePanel, needsPanel, relicsLeft, townContex
 import { openingHoursPanel } from './ui/shop-hours-panel.js';
 import { createSleepSession, sleepChoices } from './world/needs.js';
 import { createExpedition } from './adventure/expedition.js';
+import { createFirstDayTracker } from './ui/first-day-tracker.js';
+import { createPerfMeter } from './ui/perf-meter.js';
 
 const $ = (id) => document.getElementById(id);
 const status = (t) => { $('status').textContent = t; };
-const fail = (e) => { $('loading').hidden = false; $('loading').classList.add('error'); $('loading-text').textContent = 'Could not start: ' + (e?.message || e); console.error(e); };
-addEventListener('error', (e) => fail(e.error || e.message));
+// Where an error came from (file:line), so a screenshot of it is enough to find the bug.
+const errorWhere = (e) => { const m = /([\w.-]+\.js):(\d+)/.exec(String(e?.stack || '')); return m ? ` (${m[1]}:${m[2]})` : ''; };
+let started = false, lastSlip = 0;
+const fail = (e) => {
+  console.error(e);
+  const text = (e?.message || e) + errorWhere(e);
+  // A single failed click/key action after startup is not a failed startup.
+  // Keep the live town and its unsaved session visible; only startup failures
+  // should replace the entire game with the red fatal-error screen.
+  if (started || (window.__town && $('loading').hidden)) {
+    const now = Date.now();
+    if (now - lastSlip > 4000) { lastSlip = now; status('⚠️ That action could not finish, but the game is still running and your save is safe: ' + text); }
+    return;
+  }
+  $('loading').hidden = false;
+  $('loading').classList.add('error');
+  $('loading-text').textContent = 'Could not start: ' + text;
+};
+// A cross-origin script (e.g. a host toolbar on preview links) reports only
+// "Script error." with no details; it is not the game's action failing, so after
+// startup it goes to the console instead of telling the player their action failed.
+const foreignScriptError = (e) => !e?.error && (/^Script error\.?$/.test(String(e?.message || '')) ||
+  (!!e?.filename && !String(e.filename).startsWith(location.origin)));
+addEventListener('error', (e) => { if ((started || window.__town) && foreignScriptError(e)) { console.warn('Ignored error from another origin:', e.message, e.filename || ''); return; } fail(e.error || e.message); });
 addEventListener('unhandledrejection', (e) => fail(e.reason));
 
 const SKY = 0x96c9f0, INDOOR = 0x1a1612;
@@ -196,17 +229,53 @@ async function start() {
   camera.add(torchLight, torchLight.target);
   const handTorch = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.26, 10), new THREE.MeshLambertMaterial({ color: 0x2b2f36, emissive: 0x111111 }));
   handTorch.rotation.x = Math.PI / 2 - 0.2; handTorch.position.set(0.3, -0.28, -0.55); handTorch.visible = false; camera.add(handTorch);
-  // A torch to find at the Town Guide kiosk, where every game starts.
-  const kioskTorch = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.3, 10), new THREE.MeshLambertMaterial({ color: 0xd9a400 }));
-  kioskTorch.rotation.z = Math.PI / 2; kioskTorch.position.set(town.guidePos.x + 1.4, 0.06, town.guidePos.z + 0.7); town.group.add(kioskTorch);
-  const itemSpots = [{ key: 'item:guide-torch', item: 'torch', found: 'foundGuideTorch', mesh: kioskTorch, pos: kioskTorch.position, label: '🔦 Pick up the torch' }];
+  // The starter object and dropped equipment share the same persisted ownership rules.
+  seedGuideTorch(life.civic.player,{location:'town',x:town.guidePos.x+1.4,y:0,z:town.guidePos.z+.7});
+  const groundView=createGroundItemsView();
+  let itemSpots=[];
+  function itemLocation(){
+    if(mode==='town')return 'town';
+    const id=inside.countryHome?'country:'+inside.countryHome.parcelId:inside.campus?'campus:'+inside.campus.id:inside.place?'shop:'+inside.place.id:'house:'+inside.house.coordinate;
+    return id+':floor:'+(inside.floorIndex||0);
+  }
+  function itemActor(){return {location:itemLocation(),x:player.pos.x,y:player.y,z:player.pos.z};}
+  function clearItemPath(to){
+    const from=itemActor(),distance=Math.hypot(to.x-from.x,to.z-from.z),steps=Math.max(1,Math.ceil(distance/.1));
+    if(to.location!==from.location || distance>ITEM_REACH)return false;
+    for(let i=1;i<=steps;i++){
+      const t=i/steps;
+      if(world.hits(from.x+(to.x-from.x)*t,from.z+(to.z-from.z)*t,.04,from.y+.2))return false;
+    }
+    return true;
+  }
+  function persistItems(){
+    const positionSaved=save(),itemsSaved=townLife.save(),ok=positionSaved&&itemsSaved;
+    if(!ok)status('Progress is in memory only: browser saving is unavailable. Keep this tab open or export your save.');
+    return ok;
+  }
+  function dropEquipment(id){
+    const f=player.forward(),position={location:itemLocation(),x:player.pos.x+f.x*.85,y:player.y,z:player.pos.z+f.z*.85};
+    const result=dropOwnedItem(life.civic.player,id,position,p=>Math.abs(player.y-(world.groundAt?.(p.x,p.z,.12,player.y+.05)||0))<.1 && clearItemPath(p) && !world.hits(p.x,p.z,.18,player.y));
+    frameItems();
+    return result.message;
+  }
   function frameItems() {
-    const me = life.civic.player;
-    for (const it of itemSpots) it.mesh.visible = !me[it.found];
-    torchLight.intensity = torchLit(me) ? 75 : 0; torchLight.visible = torchLight.intensity > 0;
-    handTorch.visible = equippedType(me) === 'torch';
+    const me=life.civic.player;
+    itemSpots=groundView.update(groundItems(me),itemLocation(),mode==='town'?town.group:inside.group);
+    torchLight.intensity=torchLit(me)?75:0;torchLight.visible=torchLight.intensity>0;
+    handTorch.visible=equippedType(me)==='torch';
   }
   const civilWorks = buildCivilWorks(town.group);   // estate services from the planning audit
+  const woodlot = buildWoodlot(town.group, makeLabel);   // choppable trees north of the railway (skills.js)
+  // A 24-hour ATM in the Community Bank's front wall, beside the door (life.atm).
+  const bankSite = life.place('bank'), atmOut = { x: bankSite.front.x - bankSite.door.x, z: bankSite.front.z - bankSite.door.z };
+  const atmN = Math.hypot(atmOut.x, atmOut.z) || 1, atmSide = { x: -atmOut.z / atmN, z: atmOut.x / atmN };
+  const atmSpot = { key: 'bank:atm', label: '🏧 24-hour ATM · withdraw cash', pos: new THREE.Vector3(bankSite.door.x + atmSide.x * 2.4 + atmOut.x / atmN * 0.9, 0, bankSite.door.z + atmSide.z * 2.4 + atmOut.z / atmN * 0.9) };
+  { const box = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.1, 0.25), new THREE.MeshLambertMaterial({ color: 0x2f4f6f, emissive: 0x0b1a2a }));
+    box.position.set(bankSite.door.x + atmSide.x * 2.4 + atmOut.x / atmN * 0.15, 1.25, bankSite.door.z + atmSide.z * 2.4 + atmOut.z / atmN * 0.15); box.rotation.y = Math.atan2(atmOut.x, atmOut.z); box.name = 'Bank ATM'; scene.add(box); }
+  const atmPanel = (msg = '') => { const me = life.civic.player; return { title: '🏧 24-hour ATM · Community Bank',
+    body: (msg ? '<p><b>' + esc(msg) + '</b></p>' : '') + `<p>Wallet $${me.wallet}, savings $${me.bank || 0}.</p><p>Withdrawals at any hour. Deposits, loans and advice at the teller counter inside (9:00–16:00).</p>`,
+    actions: [20, 50, 100].map((n) => ({ label: `Withdraw $${n}`, run: () => atmPanel(life.atm(n)) })) }; };
   const roadSigns = buildRoadSigns(town.group, {
     highStreet: highStreetShops.length ? { z: 177, x0: Math.min(...highStreetShops.map((p) => p.x)) - 20, x1: Math.max(...highStreetShops.map((p) => p.x)) + 20 } : null,
     schools: [life.place('school')].filter(Boolean).map((p) => ({ x: p.x, z: p.door.z })),
@@ -226,7 +295,7 @@ async function start() {
     { x0: -1495, x1: 595, z0: -395, z1: -390 }, { x0: -1495, x1: 595, z0: 555, z1: 560 },
     { x0: -1495, x1: -1490, z0: -395, z1: 560 }, { x0: 590, x1: 595, z0: -395, z1: 560 },
   ];
-  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...masterplan.colliders, ...civilWorks.colliders, ...market.colliders, ...edges]);
+  const townWorld = new CollisionWorld([...town.colliders, ...townLife.colliders, ...masterplan.colliders, ...civilWorks.colliders, ...woodlot.colliders, ...market.colliders, ...edges]);
   // Dynamic vehicle footprints block player motion as well as truck movement.
   // A vehicle is approx 2.2m wide and 6.6m long; use a conservative
   // rotated-axis AABB for the town's existing 2D collision engine.
@@ -301,7 +370,7 @@ async function start() {
   floorBadge.setAttribute('aria-label', 'Choose a building floor');
   floorBadge.onclick = () => { if (inside?.floors) openLift(); };
   floorBadge.hidden = true; document.body.append(floorBadge);
-  const npcChat = mountNPCChat(document);
+  const npcChat = mountNPCChat(document, { getTown: () => life });
   let interactionRequest = 0;
 
   let mode = 'town', inside = null, world = townWorld, overview = false;
@@ -483,7 +552,7 @@ async function start() {
     world = new CollisionWorld(built.colliders);
     // Residents move between rooms, and cook in the kitchen (if the house has one) at mealtimes;
     // the interactable shares their position and tracks the room they are in.
-    const kitchens = [...new Set(built.placedProps.filter((p) => ['stove', 'fridge', 'pantry', 'coffeeMachine'].includes(p.type)).map((p) => p.room))];
+    const kitchens = rankKitchens(built.placedProps, built.rooms);
     inside.people = built.walkers.map((w, i) => {
       freeSpot(w.pos, world);
       const model=w.act?.isCareStaff?makeDistinctPerson('care-employee:'+w.act.id):makePerson(coord.charCodeAt(0) + i * 7, w.act.c ?? 0x3f6fb5, w.act.a ?? 0x2f3440);
@@ -723,15 +792,117 @@ async function start() {
     onOpen: () => { input.reset(); closePanel(); },
   });
   $('btn-townmap').onclick = () => townMap.open();
-  const openBag = () => openPanel(inventoryPanel(life.civic.player, { carried: carried?.label || null }), guideSpot);
+  // Logs are lit where you stand, a step ahead, and only outdoors.
+  // As in RuneScape, you keep striking the tinderbox once a tick until the logs catch (or you
+  // walk away); the strikes happen on the game tick in tickActions, below.
+  let lighting = null;
+  const lightHere = (log) => {
+    if (mode !== 'town' || driving.driving) return 'Light fires outdoors, on foot.';
+    const why = canLight(life.civic.player, log);
+    if (why) return why;
+    const f = player.forward();
+    lighting = { log, at: player.pos.clone(), spot: { x: player.pos.x + f.x * 1.3, z: player.pos.z + f.z * 1.3 }, ticks: 0 };
+    chopping = null;
+    status('You attempt to light the logs…');
+    return 'You attempt to light the logs…';
+  };
+  const openBag = () => openPanel(inventoryPanel(life.civic.player, { carried: carried?.label || null, drop:dropEquipment, onChange:persistItems, lightFire: lightHere }), guideSpot);
   $('btn-bag').onclick = openBag;
+  $('btn-skills').onclick = () => openPanel(skillsPanel(life.civic.player), guideSpot);
+  // Woodcutting, as in RuneScape: E on any tree turns you to face it and you keep swinging the
+  // hatchet (wind-up, chop, recoil) until the tree falls, the bag fills or you walk away. Every hit
+  // thunks and throws chips; logs are rolled on every second hit (every 2.4 s, skills.js).
+  const hatchetView = createHatchetView(camera, scene);
+  let chopping = null;
+  function startChopping(tree) {
+    const why = canChop(life, life.civic.player, tree);
+    if (why) { status(why); return; }
+    const dx = tree.pos.x - player.pos.x, dz = tree.pos.z - player.pos.z;
+    player.yaw = Math.atan2(-dx, -dz); player.pitch = 0;
+    chopping = { tree, at: player.pos.clone(), ticks: 0 }; lighting = null;
+    status(`You swing your hatchet at the ${TREES[tree.type].name.toLowerCase()}…`);
+  }
+  // The hatchet animates every frame; what it achieves happens on the 0.6 s game tick.
+  // Ticks follow the real clock (t), not the per-frame step that is capped for smooth walking.
+  const gameTick = createGameTick(); let tickClock = null;
+  function tickChopping(dt, t) {
+    const away = (a) => mode !== 'town' || driving.driving || player.pos.distanceTo(a.at) > 1.2;
+    if (chopping && away(chopping)) chopping = null;
+    if (lighting && away(lighting)) { lighting = null; status('You stop trying to light the logs.'); }
+    const impact = hatchetView.update(dt, t, { chopping: !!chopping, holding: mode === 'town' && !driving.driving && equippedType(life.civic.player) === 'hatchet' });
+    if (chopping && impact) {
+      const tr = chopping.tree, d = Math.hypot(player.pos.x - tr.pos.x, player.pos.z - tr.pos.z) || 1;
+      ambience.chop(); woodlot.hit(tr.id, t);
+      hatchetView.burst({ x: tr.pos.x + (player.pos.x - tr.pos.x) / d * 0.4, z: tr.pos.z + (player.pos.z - tr.pos.z) / d * 0.4 }, { x: (player.pos.x - tr.pos.x) / d, z: (player.pos.z - tr.pos.z) / d });
+    }
+    for (let n = gameTick.advance(tickClock === null ? 0 : t - tickClock); n > 0; n--) tickActions();
+    tickClock = t;
+  }
+  // Tap-to-walk, as in RuneScape (engine step 2): a quick tap on the view walks you there by an
+  // A* route round walls, sheds and trees (world/tap-path.js); tap a tree to walk up to it and
+  // start chopping. The keys or the stick take over at once. A yellow ring marks the spot.
+  let autoWalk = null;
+  const tapMarker = new THREE.Mesh(new THREE.RingGeometry(0.22, 0.38, 20), new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.9, depthWrite: false }));
+  tapMarker.rotation.x = -Math.PI / 2; tapMarker.visible = false; scene.add(tapMarker);
+  const endWalk = () => { autoWalk = null; input.auto = null; tapMarker.visible = false; };
+  function walkTo(x, z, tree = null) {
+    if (mode !== 'town' || driving.driving || overview) return 'Tap-to-walk works outdoors, on foot.';
+    if (Math.hypot(x - player.pos.x, z - player.pos.z) > 90) { status('That is too far to walk to in one go. Try the map.'); return 'far'; }
+    const blocked = (px, pz) => world.hits(px, pz, player.radius + 0.05);
+    const path = findPath(player.pos, { x, z }, blocked, { near: tree ? 1.7 : 0 });
+    if (!path) { status('You can’t reach that from here.'); return 'unreachable'; }
+    chopping = null; lighting = null;
+    autoWalk = { path, tree, last: player.pos.clone(), still: 0 };
+    tapMarker.position.set(x, 0.05, z); tapMarker.visible = true;
+    return null;
+  }
+  function tapWalk(sx, sy) {
+    const ndc = new THREE.Vector2((sx / innerWidth) * 2 - 1, -(sy / innerHeight) * 2 + 1);
+    const ray = new THREE.Raycaster(); ray.setFromCamera(ndc, camera);
+    const hit = new THREE.Vector3();
+    if (!ray.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return 'sky';
+    let tree = null, best = 2.5;
+    for (const tr of woodlot.allTrees()) { const d = Math.hypot(tr.pos.x - hit.x, tr.pos.z - hit.z); if (d < best && !isStump(life, tr.id)) { best = d; tree = tr; } }
+    return walkTo(tree ? tree.pos.x : hit.x, tree ? tree.pos.z : hit.z, tree);
+  }
+  function stepAutoWalk(dt) {
+    if (!autoWalk) { input.auto = null; return; }
+    if (input.steering() || mode !== 'town' || driving.driving) { endWalk(); return; }
+    let next = autoWalk.path[0];
+    while (next && Math.hypot(next.x - player.pos.x, next.z - player.pos.z) < 0.35) { autoWalk.path.shift(); next = autoWalk.path[0]; }
+    if (!next) { const tree = autoWalk.tree; endWalk(); if (tree) startChopping(tree); return; }
+    // Someone standing in the way: give up after a couple of seconds without progress.
+    if (player.pos.distanceTo(autoWalk.last) < 0.02) { if ((autoWalk.still += dt) > 2) { endWalk(); status('Something is in the way.'); return; } }
+    else { autoWalk.still = 0; autoWalk.last.copy(player.pos); }
+    const dx = next.x - player.pos.x, dz = next.z - player.pos.z, n = Math.hypot(dx, dz);
+    // Turn gently toward the way ahead, and steer camera-relative so the move itself is exact.
+    let turn = Math.atan2(-dx, -dz) - player.yaw; turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+    player.yaw += turn * Math.min(1, 4 * dt);
+    const c = Math.cos(player.yaw), sn = Math.sin(player.yaw), ux = dx / n, uz = dz / n;
+    input.auto = { x: ux * c - uz * sn, z: ux * sn + uz * c };
+  }
+  function tickActions() {
+    if (chopping && ++chopping.ticks % CHOP_TICKS === 0) {
+      const r = swing(life, life.civic.player, chopping.tree);
+      status(r.message);
+      if (r.levelUp) ambience.levelUp();
+      if (r.felled) ambience.treeFall();
+      if (r.stop) chopping = null;
+    }
+    if (lighting && ++lighting.ticks % LIGHT_TICKS === 0) {
+      const r = lightLogs(life, life.civic.player, lighting.log, lighting.spot);
+      if (!r.ok) { status(r.message); lighting = null; }
+      else if (r.lit) { status(r.message); if (r.levelUp) ambience.levelUp(); lighting = null; }
+      else if (lighting.ticks >= LIGHT_GIVE_UP) { status('The logs just will not catch. Try again.'); lighting = null; }
+    }
+  }
   // Captured before the input handler: F is also a "use" key, so while the torch is in hand it
   // switches the torch instead (otherwise F keeps working as use).
   addEventListener('keydown', (e) => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.target?.closest?.('input,textarea,select,[contenteditable]')) return;
     const k = String(e.key ?? '').toLowerCase();
     if (k === 'i') { e.preventDefault(); if (panelOpen) closePanel(); else openBag(); }
-    if (k === 'f' && equippedType(life.civic.player) === 'torch') { e.preventDefault(); e.stopImmediatePropagation(); status(toggleTorch(life.civic.player)); }
+    if (k === 'f' && equippedType(life.civic.player) === 'torch') { e.preventDefault(); e.stopImmediatePropagation(); status(toggleTorch(life.civic.player));persistItems(); }
   }, { capture: true });
   // Hidden playtest cheat menu (src/ui/cheat-menu.js): five taps on the HUD title or ` three times.
   const toTown = () => { if (driving.driving) return 'Park and get out first.'; if (mode === 'house') leave(false); return null; };
@@ -773,7 +944,7 @@ async function start() {
       buyKey: (raw) => {
         const v = String(raw || '').trim(); if (!v) return { message: 'Type a house grid code like A1, or B:bakery.' };
         let key = /^[HBP]:/i.test(v) ? v[0].toUpperCase() + v.slice(1) : /^[A-Z][1-8]$/i.test(v) ? 'H:' + v.toUpperCase() : planTitleKey(v);
-        if (!key) { const p = [...life.places.values()].find((q) => q.name.toLowerCase().includes(v.toLowerCase())); key = p ? 'B:' + p.id : null; }
+        if (!key) { const needle = v.toLowerCase(); const p = [...life.places.values()].find((q) => String(q?.name ?? '').toLowerCase().includes(needle)); key = p ? 'B:' + p.id : null; }
         return key ? claimProperty(life, key) : { message: `No property matches “${v}”.` };
       },
       t8: () => setClock(life, 8 * 60), t13: () => setClock(life, 13 * 60), t20: () => setClock(life, 20 * 60),
@@ -821,6 +992,11 @@ async function start() {
     speedSlider.focus();
   };
   $('settings-close').onclick = closeSettings;
+  $('settings-save-transfer').onclick = () => { persistItems(); };
+  // Start a new game: confirm, then reload; ui/new-game.js clears progress before the town loads.
+  $('settings-new-game').onclick = () => { $('settings-new-game-note').hidden = false; $('settings-new-game-cancel').focus(); };
+  $('settings-new-game-cancel').onclick = () => { $('settings-new-game-note').hidden = true; };
+  $('settings-new-game-confirm').onclick = () => { try { sessionStorage.setItem('repository-town.new-game', '1'); } catch { clearSave(); } location.reload(); };
   // Resident style: one button per style; models load only when chosen (world/resident-models.js).
   function renderResidentStyles(message) {
     const current = townLife.residentModels.style(), box = $('resident-style-options');
@@ -986,50 +1162,23 @@ async function start() {
   // Chooses the exhibit the player is looking at, not merely the closest one,
   // so neighbouring exhibits can each be selected by facing them.
   function pickNear(at = player.pos, fwd = player.forward()) {
-    let pick = null, best = Infinity;
-    for (const x of inside.interactables) {
-      tmp.copy(x.pos).sub(at); tmp.y = 0; const d = tmp.length();
-      if (d > 2.6) continue;
-      const dot = d < 0.01 ? 1 : tmp.normalize().dot(fwd);
-      if (dot < 0.2 && d > 1.2) continue;
-      const score = d - 1.6 * dot;
-      if (score < best) { best = score; pick = x; }
-    }
-    // Authored interactions take priority; passive furniture and seats are
-    // selectable when the player looks at them instead of replacing exhibits.
-    const seat=nearestSeat((inside.seats||[]).filter(s=>!s.occupiedBy),at,fwd,2.6);
-    if(seat) {
-      const d=Math.hypot(seat.pos.x-at.x,seat.pos.z-at.z);
-      const facing=d<.01?1:((seat.pos.x-at.x)*fwd.x+(seat.pos.z-at.z)*fwd.z)/d;
-      // A visible seat wins when clearly nearer or better aligned than the
-      // exhibit. Otherwise keep the intentional authored exhibit.
-      if(!pick || d-.7*facing<best-.35)
-        return {...seat,act:{do:'sit',title:seat.label}};
-    }
-    if(pick)return pick;
-    const furniture=inside.furniture||[];
-    let selected=null,rank=Infinity;
-    for(const item of furniture) {
-      const dx=item.pos.x-at.x,dz=item.pos.z-at.z,d=Math.hypot(dx,dz);
-      if(d>2.4)continue;
-      const facing=d<.01?1:(dx*fwd.x+dz*fwd.z)/d;
-      if(facing<.25&&d>1.1)continue;
-      const score=d-.7*facing;
-      if(score<rank){rank=score;selected=item;}
-    }
-    return selected;
+    return pickInteriorInteraction(inside,at,fwd,player.y+player.eye);
   }
+
   // Relics, street characters, villagers, the guide and shop counters can stand close
   // together, so Use goes to whichever is nearest; everything stays reachable.
   const away = (p) => (p ? Math.hypot(player.pos.x - p.pos.x, player.pos.z - p.pos.z) : Infinity);
   // Carrying a small object picked up indoors: it floats in front of the player each frame
   // (carryFrame) and is put down where they face, on the floor or on a table top.
   let carried = null;
+  // Some legacy/interior pickup records have no display label. Never let a
+  // missing optional label turn a normal item action into a fatal red screen.
+  const carryName = (thing) => String(thing?.label || thing?.act?.title || thing?.key || 'object').toLowerCase();
   function pickUp(thing) {
     if (carried) return;
     const list = inside?.interactables, i = list ? list.indexOf(thing) : -1;
     if (i >= 0) list.splice(i, 1);
-    carried = thing; status(`Carrying the ${thing.label.toLowerCase()}. Press use (E or ✋) to put it down where you are facing.`);
+    carried = thing; status(`Carrying the ${carryName(thing)}. Press use (E or ✋) to put it down where you are facing.`);
   }
   function putDown() {
     const f = player.forward(), x = player.pos.x + f.x * 0.85, z = player.pos.z + f.z * 0.85;
@@ -1037,13 +1186,25 @@ async function start() {
     const y = world.groundAt ? world.groundAt(x, z, 0.3, player.y + 1.2) : 0;
     carried.mesh.position.set(x, y, z); carried.mesh.rotation.y = player.yaw;
     inside?.interactables?.push(carried);
-    status(`Put the ${carried.label.toLowerCase()} down${y > 0.05 ? ' on top' : ''}.`); carried = null;
+    status(`Put the ${carryName(carried)} down${y > 0.05 ? ' on top' : ''}.`); carried = null;
   }
   function carryFrame() {
     if (!carried) return;
     const f = player.forward();
     carried.mesh.position.set(player.pos.x + f.x * 0.75, player.y + player.eye - 0.75, player.pos.z + f.z * 0.75);
     carried.mesh.rotation.y = player.yaw;
+  }
+  function nearestGroundItem(){
+    const f=player.forward();
+    return itemSpots.filter(sp=>{
+      const dx=sp.pos.x-player.pos.x,dz=sp.pos.z-player.pos.z,d=Math.hypot(dx,dz);
+      return d<=ITEM_REACH && (d<1.2 || (dx*f.x+dz*f.z)/d>.2) && clearItemPath({...sp.pos,location:itemLocation()});
+    }).sort((a,b)=>away(a)-away(b))[0]||null;
+  }
+  function takeGroundItem(spot){
+    const me=life.civic.player,result=pickupItem(me,spot.itemId,itemActor(),clearItemPath);
+    if(result.ok && !equippedType(me))equip(me,result.id);
+    frameItems();status(result.message);if(result.ok)persistItems();
   }
   function use() {
     if (carried) { putDown(); return; }
@@ -1054,6 +1215,7 @@ async function start() {
       else status('There is no clear space to stand. Move the furniture or try again.');
       return;
     }
+    if(mode==='house' && nearestGroundItem()){takeGroundItem(nearestGroundItem());return;}
     if (mode === 'town') {
       if(nearTownSeat && player.sit(nearTownSeat,world)){
         status('Sitting on '+nearTownSeat.label+'. Look around; move, jump or use to stand.');
@@ -1062,13 +1224,15 @@ async function start() {
       const treasure = expedition.nearby(player.pos), treasureD = away(treasure), npcD = away(nearNPC), personD = away(nearPerson);
       if (treasure && treasureD <= npcD && treasureD <= personD) { expedition.use(player.pos); ambience.relic(); return; }
       if (nearNPC && npcD <= personD) { input.releaseMouse(); closePanel(); $('npc-roster').hidden = true; npcChat.show(nearNPC.npc, null); input.reset(); return; }
-      if (nearPerson?.spot?.item) {
-        const me = life.civic.player, sp = nearPerson.spot; me[sp.found] = true;
-        const id = addItem(me, sp.item); if (!equippedType(me)) equip(me, id);
-        status('You pick up a torch and hold it. Press F (or open 🎒 Bag) to switch it on.'); return;
-      }
+      if (nearPerson?.spot?.tree) { startChopping(nearPerson.spot.tree); return; }
+      if (nearPerson?.spot?.atm) { openPanel(atmPanel(), guideSpot); return; }
+      if (nearPerson?.spot?.rack) { status(takeRackTools(life.civic.player).message); return; }
+      if (nearPerson?.spot?.itemId) { takeGroundItem(nearPerson.spot); return; }
       if (nearPerson?.spot?.market) { openPanel(stallPanel(life, nearPerson.spot.market, (id, i) => buyAtStall(life, id, i)), guideSpot); return; }
-      if (nearPerson?.spot?.id === 'square') { openPanel(marketNotice(life.day, life.minute), guideSpot); return; }   // an open square, not a building
+      if (nearPerson?.spot?.id === 'square') {   // an open square, not a building: the market notice and the latest town news
+        const notice = marketNotice(life.day, life.minute), clean = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+        openPanel({ ...notice, body: notice.body + `<h3>Town news</h3><ul class="news">${life.news(6).map((e) => `<li><span class="dim">${clean(e.t)}</span> ${clean(e.text)}</li>`).join('')}</ul>` }, guideSpot); return;
+      }
       if (nearPerson) { if(nearPerson.spot){enterShop(nearPerson.spot.id);return;} talkTo(nearPerson); return; }
       if (nearHouse) showCard(nearHouse.house);
       return;
@@ -1310,6 +1474,17 @@ async function start() {
     mctx.beginPath(); mctx.moveTo(0, -6); mctx.lineTo(4, 4); mctx.lineTo(-4, 4); mctx.fill(); mctx.restore();
   }
 
+  // ── First day in town: the guided first day under the minimap ───────────
+  const firstDay = createFirstDayTracker({ life, player, openPanel, closePanel, status,
+    targetPos: (t) => t.place ? townLife.placeFront(t.place) : t.spot ? woodlot.rack.pos : null,
+    insidePlaceId: () => mode === 'house' ? (inside?.place?.id ?? '') : null, suppressed: () => driving.driving });
+
+  // Performance readout (Settings, or ?perf): measures this device, for real-phone checks.
+  const perf = createPerfMeter({ renderer, details: () => ({ smooth: lowPerf, where: mode === 'house' ? 'indoors' : overview ? 'map' : 'outdoors' }) });
+  const syncPerfSetting = () => { $('settings-perf').setAttribute('aria-pressed', String(perf.on)); $('settings-perf').textContent = perf.on ? 'Hide performance readout' : 'Show performance readout'; };
+  $('settings-perf').onclick = () => { perf.set(!perf.on); syncPerfSetting(); };
+  syncPerfSetting();
+
   // ── Frame loop ───────────────────────────────────────────────────────────
   const clock = new THREE.Clock();
   let mapTimer = 0, frames = 0, fpsTimer = 0, fps = 0, prevX = player.pos.x, prevZ = player.pos.z;
@@ -1332,10 +1507,16 @@ async function start() {
     slowSeconds = 0; fastSeconds = 0; resolutionCooldown = 6;
   }
   const tmp = new THREE.Vector3();
+  // A frame that throws must not stop the loop: queue the next frame, then let the error
+  // reach the window handler (fail, above) and any test listening for page errors.
   function frame() {
+    try { frameStep(); } catch (e) { requestAnimationFrame(frame); throw e; }
+  }
+  function frameStep() {
     // Up to 0.15 s per frame keeps walking real-time on slow phones; collision subdivides the step.
     const raw = clock.getDelta(), dt = Math.min(raw, 0.15), t = clock.elapsedTime;
     floorDoorCooldown = Math.max(0, floorDoorCooldown - dt);
+    perf.frame(raw);
     frames++; fpsTimer += raw; if (fpsTimer > 1) {
       fps = frames / fpsTimer;
       adaptResolution(fpsTimer);
@@ -1361,8 +1542,16 @@ async function start() {
     else {
       const n=life.needsReport();
       player.speedFactor=movementSpeedFactor(movementSpeed,n.hunger,n.fatigue);
+      // While driving: V (or 🎥 on phones) switches chase, rider's-eye and high views.
+      if(driving.driving&&input.consume('view'))status(driving.cycleView()); else input.consume('view');
+      // Jump, run and crouch do nothing in a vehicle: show ✋ and 🎥 only, clear of the minimap.
+      $('t-view').hidden=!driving.driving; for(const id of ['t-jump','t-run','t-crouch'])$(id).hidden=driving.driving;
       if(mode==='town'&&driving.driving){ driving.update(dt); if(driving.message){ status(driving.message); driving.clearMessage(); } }
-      else player.update(dt,input,world);
+      else {
+        if (mode === 'town' && !overview) for (const tap of input.takeTaps()) tapWalk(tap.x, tap.y); else input.takeTaps();
+        stepAutoWalk(dt);
+        player.update(dt,input,world);
+      }
     }
     drivingDashboard.update(mode==='town'&&!overview?driving.activeVehicle():null);
     market.update(life.day, life.minute);
@@ -1473,11 +1662,17 @@ async function start() {
         if ((facing > 0.2 || d < 1.2) && score < bestP) { bestP = score; nearPerson = c; }
       };
       for (const p of townLife.people) if (!p.v.inside) consider(p, 2.6);
-      consider(guideSpot, 2.6);
+      // As keen as the torch beside it, so facing Wren talks to Wren (the torch used to win every time).
+      // Keep Wren selectable when facing her, without stealing the pickup cue for the nearby torch.
+      // At the starter's pickup pose a 2.0 bonus wrongly outranked the closer, directly faced item.
+      consider(guideSpot, 2.6, 1.2);
       // A shop door you are facing wins over a villager walking past or queuing beside it.
       for (const sp of townLife.spots) consider({ ...sp, spot: sp }, 3.2, 1.5);
       if (market.root.visible) for (const sp of market.spots) consider({ ...sp, spot: sp }, 3.6, 2.0);
-      for (const sp of itemSpots) if (!life.civic.player[sp.found]) consider({ ...sp, spot: sp }, 2.6, 2.0);
+      for (const sp of itemSpots) if(clearItemPath({...sp.pos,location:'town'}))consider({ ...sp, spot: sp }, ITEM_REACH, 0);
+      if (Math.abs(atmSpot.pos.x - player.pos.x) < 4 && Math.abs(atmSpot.pos.z - player.pos.z) < 4) consider({ ...atmSpot, spot: { atm: true } }, 2.4, 1.5);
+      if (Math.abs(woodlot.rack.pos.x - player.pos.x) < 4 && Math.abs(woodlot.rack.pos.z - player.pos.z) < 4) consider({ ...woodlot.rack, spot: { rack: true } }, 2.6, 1.5);
+      for (const tr of woodlot.allTrees()) if (Math.abs(tr.pos.x - player.pos.x) < 4 && Math.abs(tr.pos.z - player.pos.z) < 4) consider({ key: tr.key, pos: tr.pos, label: isStump(life, tr.id) ? `${TREES[tr.type].name} stump · it will grow back` : tr.label, spot: { tree: tr } }, 2.8, 2.0);
       nearTownSeat = !overview&&!driving.driving ? nearestSeat(townLife.seats,player.pos,player.forward(),2.4) : null;
       nearCar = !overview&&!driving.driving ? driving.nearest() : null;
       nearHouse = null; let best = 6;
@@ -1599,11 +1794,13 @@ async function start() {
       else {
         nearThing = player.seated ? null : pickNear();
         nearNPC = null;
-        if (carried && !panelOpen) { $('prompt').hidden = false; $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Put down the ${carried.label.toLowerCase()}`; }
+        if (carried && !panelOpen) { $('prompt').hidden = false; $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Put down the ${carryName(carried)}`; }
         else $('prompt').hidden = (!nearThing && !player.seated) || !!panelOpen || npcChat.isOpen() || !$('npc-roster').hidden;
         const who = nearThing?.person && inside.people?.find((p) => p.key === nearThing.key);
         if (player.seated) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Stand up · Move or jump to stand`;
         else if (nearThing && !carried) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — ${nearThing.act?.do==='sit'?'Sit on ':nearThing.act?.do==='pickup'?'Pick up ':''}${nearThing.label}${who ? ` · ${who.activity}` : ''}`;
+        const groundItem=nearestGroundItem();
+        if(groundItem && !carried && !player.seated && !panelOpen && !npcChat.isOpen()){$('prompt').hidden=false;$('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — ${groundItem.label}`;}
         if (input.consume('use')) use();
         // An exit action can dispose the interior during this frame. Keep the town loop alive.
         if(inside){
@@ -1639,6 +1836,8 @@ async function start() {
     }
     if (mode === 'town') input.consume('use');
     expedition.update(t,player,mode);
+    tickChopping(dt, t);
+    if (mode === 'town') woodlot.update(life, t, chopping?.tree.id);
     // One prompt at a time: the gold chest/relic bar only when E would open it, else the usual prompt.
     if (mode === 'town' && !$('expedition-hint').hidden) {
       const relic = expedition.nearby(player.pos), d = (o) => (o ? Math.hypot(o.pos.x - player.pos.x, o.pos.z - player.pos.z) : Infinity);
@@ -1646,6 +1845,7 @@ async function start() {
       if (relicWins) $('prompt').hidden = true; else $('expedition-hint').hidden = true;
     }
     mapTimer += dt; if (mapTimer > 0.2) { drawMap(); mapTimer = 0; }
+    firstDay.update(dt);
     saveTimer += dt; if (saveTimer > 3) { save(); saveTimer = 0; }
     // Apply after selecting the new nearby prompt: never let it reappear over
     // a shop menu, building card, NPC conversation or other focused interface.
@@ -1656,11 +1856,32 @@ async function start() {
 
   addEventListener('resize', () => { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });
 
+  // One HUD overlay at a time. Each opener's own handler runs after this, so a
+  // second press on the same button still toggles its own overlay closed.
+  {
+    const owns = { 'btn-journal': 'journal', 'btn-npcs': 'npc-roster', 'btn-town-yarns': 'yarns', 'btn-town-dialogue-settings': 'yarns', 'btn-help': 'help', 'btn-settings': 'settings', 'town-companion-button': 'companion' };
+    const panelOpeners = new Set(['btn-000', 'btn-needs', 'btn-wallet', 'btn-bag', 'btn-skills', 'btn-townmap', 'btn-guide', 'btn-hours', 'btn-discoveries', 'btn-electrical-grid', 'btn-table-order']);
+    $('hud').addEventListener('click', (e) => {
+      const b = e.target.closest?.('button'); if (!b) return;
+      const own = owns[b.id] || (panelOpeners.has(b.id) || b === audioMixButton ? 'panel' : null);
+      if (!own) return;
+      if (own !== 'journal' && expedition.isOpen()) expedition.dismiss();
+      if (own !== 'yarns' && yarns.isOpen()) yarns.close();
+      if (own !== 'npc-roster') $('npc-roster').hidden = true;
+      if (own !== 'help') $('help').hidden = true;
+      if (own !== 'settings' && !$('settings').hidden) closeSettings();
+      if (own !== 'companion' && companion.isOpen()) companion.close();
+      if (own !== 'panel' && panelOpen) closePanel();
+    }, { capture: true });
+  }
+
   // Test hook: lets the browser test suite drive real gameplay deterministically.
   window.__town = {
     // Test harness fast-forwards genuine simulation steps, allowing attendants to
     // commute to their workstations before the browser tries a staffed entrance.
     // Access-control decisions remain unchanged: no unlocked-door shortcut.
+    firstDay:()=>firstDay.view(),
+    perf:()=>perf.stats(),
     pilotGrid:()=>pilotReport(life),
     pilotAction:(command)=>{const answer=pilotAction(life,command);pilotVisuals.update();return answer;},
     advanceSimulation(minutes) {
@@ -1697,7 +1918,7 @@ async function start() {
       workplay:life.civic.workplay||null,
       mode, sleeping, driving: driving.activeVehicle()?.registration||null, nearbyVehicle:nearCar?.registration||null, seated: player.seated ? {key:player.seated.key,label:player.seated.label} : null,
       seats: mode==='house' ? (inside?.seats||[]).map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos,room:x.room})) : townLife.seats.map(x=>({key:x.key,type:x.type,label:x.label,pos:x.pos})),
-      levelName:inside?.levelName||'Ground floor',floorElevation:inside?.group.position.y||0,coordinate: inside?.house.coordinate || null, floor: inside?.floorIndex || 0, windows: inside?.windows?.length || 0, floors: inside?.floors?.levels.length || 1, pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, eye: player.eye, y: player.y, fps,
+      levelName:inside?.levelName||inside?.floors?.titles?.[inside.floorIndex]||'Ground floor',floorElevation:inside?.group.position.y||0,coordinate: inside?.house.coordinate || null, floor: inside?.floorIndex || 0, windows: inside?.windows?.length || 0, floors: inside?.floors?.levels.length || 1, pos: { x: player.pos.x, z: player.pos.z }, yaw: player.yaw, eye: player.eye, y: player.y, fps,
       rooms: inside?.rooms.length || 0, props: inside?.placedProps.length || 0,
       interactables: inside ? inside.interactables.map((x) => ({ key: x.key, label: x.label, title: x.act.title || x.label, do: x.act.do, nav: x.floorNav || null, room: x.roomName })) : [],
       near: nearThing?.key || null, nearNPC: nearNPC?.npc.id || null, nearHouse: nearHouse?.house.coordinate || null,
@@ -1710,16 +1931,25 @@ async function start() {
     // Stands the player 1.6 m in front of an exhibit, facing it, so the test then presses Use.
     approach(key) {
       const x = inside?.interactables.find((i) => i.key === key); if (!x) return false;
-      const c = new THREE.Vector3((inside.rooms[x.room].x0 + inside.rooms[x.room].x1) / 2, 0, (inside.rooms[x.room].z0 + inside.rooms[x.room].z1) / 2);
+      const room=inside.rooms.find(r=>x.pos.x>r.x0&&x.pos.x<r.x1&&x.pos.z>r.z0&&x.pos.z<r.z1)||inside.rooms[x.room];
+      const c = new THREE.Vector3((room.x0 + room.x1) / 2, 0, (room.z0 + room.z1) / 2);
       const dir = c.clone().sub(x.pos); dir.y = 0; if (dir.length() < 0.01) dir.set(0, 0, 1); dir.normalize();
-      for (const dist of [1.6, 1.9, 1.3, 2.2]) {
-        for (const turn of [0, 0.5, -0.5, 1, -1]) {
+      // Prefer the target's own room: a pose through an open doorway can lose
+      // its prompt when that door closes or the resident changes rooms.
+      for(const sameRoom of [true,false]){
+      for (const dist of [1.6, 1.9, 1.3, 2.2, 0.9, 0.7]) {
+        for (const turn of [0, 0.5, -0.5, 1, -1, 1.5, -1.5]) {
           const v = dir.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), turn);
           const p = x.pos.clone().addScaledVector(v, dist);
+          if(sameRoom&&!(p.x>room.x0+.05&&p.x<room.x1-.05&&p.z>room.z0+.05&&p.z<room.z1-.05))continue;
+          const ex=inside.exitZone,rear=inside.rearExitZone;
+          if(ex&&Math.abs(p.x-(ex.x0+ex.x1)/2)<1.55&&p.z>inside.rooms[0].z1-1.3)continue;
+          if(rear&&p.x>rear.x0&&p.x<rear.x1&&p.z<rear.z1)continue;
           const yaw = Math.atan2(-(x.pos.x - p.x), -(x.pos.z - p.z));
           const fwd = new THREE.Vector3(-Math.sin(yaw), 0, -Math.cos(yaw));
           if (!world.hits(p.x, p.z, player.radius + 0.05) && pickNear(p, fwd) === x) { player.place(p.x, p.z, yaw); return true; }
         }
+      }
       }
       return false;
     },
@@ -1757,6 +1987,7 @@ async function start() {
     meetGuide() { if (mode === 'house') leave(false); player.place(town.guidePos.x, town.guidePos.z + 1.6, 0); return 'guide'; },
     goPlace,
     driveDashboard:()=>drivingDashboard.getState(),
+    groundItems:()=>groundItems(life.civic.player).map(i=>({...i})),
     inventory:()=>{const me=life.civic.player;return {items:(me.items||[]).map(i=>i.type),held:equippedType(me),torchOn:torchLit(me),light:torchLight.intensity};},
     market:()=>({standing:market.root.visible,spots:market.spots.map(s=>({key:s.key,x:s.pos.x,z:s.pos.z,label:s.label}))}),
     roadSigns:()=>roadSigns.signs.map(({type,x,z,yaw})=>({type,x,z,yaw})),
@@ -1773,8 +2004,9 @@ async function start() {
     vehicles:()=>life.motorReport().owned.map(v=>({...v})),
     enterVehicle:(reg)=>driving.enter(life.motorReport().owned.find(v=>v.registration===reg)),
     leaveVehicle:()=>driving.exit(),
-    stepVehicle:(seconds)=>driving.update(seconds),
-    shops:()=>[...life.places.values()].map(p=>({id:p.id,name:p.name,kind:p.kind,side:p.side||'north',expansion:!!p.expansion,door:{x:p.x,z:p.door.z}})),
+    // A fixed step behaves like a real frame, including showing the driving message (off-road, braking).
+    stepVehicle:(seconds)=>{const moved=driving.update(seconds);if(driving.message){status(driving.message);driving.clearMessage();}return moved;},
+    shops:()=>[...life.places.values()].map(p=>({id:p.id,name:p.name,kind:p.kind,side:p.side||null,expansion:!!p.expansion,door:{x:p.x,z:p.door.z}})),
     enterShop,
     residentStyle:(id)=>{ if(id){ townLife.residentModels.setStyle(id); renderResidentStyles(); } return { style: townLife.residentModels.style(), ready: townLife.residentModels.ready(), wearing: townLife.residentModels.wearing() }; },
     residentStyleReady:()=>townLife.residentModels.whenReady(),
@@ -1786,6 +2018,11 @@ async function start() {
     streetPeople:()=>streetNPCs.map(n=>({id:n.npc.id,name:n.npc.name,x:n.pos.x,z:n.pos.z,mode:n.mode||null,visible:n.group?.visible??null})),
     townFigures:()=>townLife.people.map(p=>({key:p.key,x:p.fig.group.position.x,z:p.fig.group.position.z,visible:p.fig.group.visible})),
     // Stands 1.3 m inside window i of the current floor, looking out of it.
+    walkTo: (x, z, treeId = null) => walkTo(x, z, treeId ? woodlot.allTrees().find((t) => t.id === treeId) : null), tapWalk: (sx, sy) => tapWalk(sx, sy),
+    autoWalk: () => autoWalk && { legs: autoWalk.path.length, to: autoWalk.path.at(-1) || null, tree: autoWalk.tree?.id || null },
+    atm: () => ({ x: atmSpot.pos.x, z: atmSpot.pos.z, yaw: Math.atan2(atmOut.x, atmOut.z) }),
+    skills:()=>({ report: skillsReport(life.civic.player), chopping: chopping?.tree.id || null, lighting: !!lighting, tick: gameTick.count, fires: woodlot.fireCount(),
+      trees: woodlot.allTrees().map((tr) => ({ id: tr.id, type: tr.type, x: tr.pos.x, z: tr.pos.z, stump: isStump(life, tr.id) })), hatchet: { visible: hatchetView.visible, angle: hatchetView.angle }, logs: { ...(life.civic.player.logs || {}) } }),
     lookOut(i=0){
       const w=inside?.windows?.[i];if(!w)return false;
       const c=(w.s+w.e)/2;
@@ -1794,6 +2031,7 @@ async function start() {
       return true;
     },
     exitShop:()=>{if(!inside?.place)return false;leave();return true;},
+    visitorRoutes:()=>[...(inside?.visitors?.entries?.values()||[])].map(p=>({id:p.v.id,state:p.state,next:p.next,pos:{x:p.pos.x,z:p.pos.z},landing:p.landing,goal:p.retryGoal,route:p.route,seat:p.seat?.key,queueSlot:p.queueSlot,exit:p.exit})),
     life: {
       ledger: () => life.ledger(), describe: (i) => life.describe(life.villagers[i]),
       // Jumps the clock (tests): everyone re-plans their day from scratch.
@@ -1816,6 +2054,8 @@ async function start() {
   };
 
   $('loading').hidden = true;
+  started = true;
+  if (window.__townNewGame) status('New game started. Welcome to Repository Town!');
   requestAnimationFrame(frame);
 }
 

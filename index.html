@@ -9,9 +9,10 @@
 <link rel="stylesheet" href="ui/driving-dashboard.css">
 <link rel="stylesheet" href="npc.css">
 <link rel="stylesheet" href="adventure/adventure.css">
+<script src="ui/new-game.js"></script>
 <script defer src="ui/hud-collapse.js"></script>
 <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/utils/BufferGeometryUtils.js":"./vendor/BufferGeometryUtils.js"}}</script>
-<script defer src="https://cloud.umami.is/script.js" data-website-id="__UMAMI_WEBSITE_ID__" data-do-not-track="true" data-performance="true" data-exclude-hash="true" data-domains="joshualparris.github.io" data-tag="JoshMemory"></script>
+<script defer src="ui/analytics.js" data-website-id="__UMAMI_WEBSITE_ID__" data-do-not-track="true" data-performance="true" data-exclude-hash="true" data-domains="joshualparris.github.io" data-tag="JoshMemory"></script>
 </head>
 <body>
 <div id="loading" role="status"><h1>Repository Town</h1><p id="loading-text">Loading the town…</p><p><a href="arcade.html">Open arcade library without 3D →</a></p></div>
@@ -32,12 +33,13 @@
     <button id="btn-map" aria-pressed="false">Bird's-eye</button>
     <button id="btn-capture" type="button" aria-pressed="false" title="Look around without holding a mouse button (L)">🎯 Capture mouse</button>
     <button id="btn-bag" type="button" title="Your bag: equipment, food and goods (I)">🎒 Bag</button>
+    <button id="btn-skills" type="button" title="Your skills: levels and XP">📊 Skills</button>
     <button id="btn-townmap" type="button" title="Interactive town map: pinch or scroll to zoom, tap for addresses (N)">🗺️ Map</button>
     <button id="btn-guide" type="button" title="Town guide & starting tour">🗺 Guide</button>
     <button id="btn-hours" type="button" title="Opening hours, live entry status and directions for every town business">🕒 Shop hours</button>
     <button id="btn-discoveries" type="button" title="Explorer's Log: house discovery progress" aria-label="Explorer's Log, 0 of 188 houses discovered">🧭 <span id="discovery-count">0/188</span></button>
     <button id="btn-help">Help</button>
-    <button id="btn-settings" type="button" aria-controls="settings" title="Adjust walking and running speed">Settings</button>
+    <button id="btn-settings" type="button" aria-controls="settings" title="Preferences and saved progress">Settings</button>
     <button id="btn-journal" type="button" title="Adventure quests and treasures (J)">📖 Quests <span id="expedition-count"></span></button>
     <button id="btn-npcs" type="button" title="Meet the town's characters">💬 NPCs</button>
     <button id="btn-electrical-grid" type="button" title="Inspect the physical town grid, solar, meters and local outages" aria-label="Open town electrical grid inspector">⚡ Grid</button>
@@ -72,6 +74,12 @@
 <section id="settings" role="dialog" aria-labelledby="settings-title" aria-modal="false" hidden>
   <button id="settings-close" type="button" aria-label="Close settings">✕</button>
   <h2 id="settings-title">Settings</h2>
+  <fieldset><legend>Saved progress</legend>
+    <p>Your game saves automatically on this device. No account is needed.</p>
+    <a id="settings-save-transfer" class="btn-link" href="release.html" target="_blank" rel="noopener">Back up or restore your save</a>
+    <button id="settings-new-game" type="button">Start a new game</button>
+    <p id="settings-new-game-note" hidden>This clears your town, money, items, skills and quests on this device. Your settings stay. <button id="settings-new-game-confirm" type="button">Yes, start over</button> <button id="settings-new-game-cancel" type="button">Keep my game</button></p>
+  </fieldset>
   <div class="speed-setting">
     <div class="speed-setting-heading"><label for="movement-speed">Movement speed</label><output id="movement-speed-value" for="movement-speed">1.0×</output></div>
     <input id="movement-speed" type="range" min="0.1" max="5" step="0.1" value="1" aria-describedby="movement-speed-description movement-speed-preview">
@@ -80,6 +88,10 @@
     <p id="movement-speed-description">Applies immediately to walking and the Run button, indoors and outside. Hunger and tiredness can still reduce your speed. Saved on this device.</p>
     <button id="movement-speed-reset" type="button">Reset to normal (1×)</button>
   </div>
+  <fieldset id="perf-setting"><legend>Performance</legend>
+    <p>Shows frame rate, the slowest frames, draw calls and your phone's graphics chip on screen. Tap the readout for a 30-second check, then screenshot it. Saved on this device.</p>
+    <button id="settings-perf" type="button" aria-pressed="false">Show performance readout</button>
+  </fieldset>
   <fieldset id="resident-style-setting" class="resident-style-setting">
     <legend>Resident style</legend>
     <div id="resident-style-options" role="radiogroup" aria-describedby="resident-style-status"></div>
@@ -93,6 +105,7 @@
   <p><b>Adventure:</b> Press J or open the Quest Journal. Find twelve glowing relics outside public houses, solve the puzzles and return to the Guild Chest near the start.</p>
   <p><b>In-game emergencies:</b> Tap 🚨 000 (Game) to simulate a Police, Fire or Ambulance emergency. This never contacts real emergency services. For a real emergency, use your phone to call 000.</p>
   <p><b>Finding open shops:</b> choose 🕒 Shop hours to see daily hours, live entry status and directions for all shops and services.</p>
+   <p><b>Items:</b> Find the torch beside the Town Guide. Press E or tap ✋ to pick it up. Open your Bag to hold, put away or drop it on clear ground. Dropped equipment stays there for you to collect, including after a reload.</p>
    <p><b>Town life:</b> the town runs on its own clock (a day lasts 72 minutes; the Town Guide kiosk near the start can speed it up). Farms on street 8 grow food, trucks deliver it to the mill, bakery and shops, and the villagers work, shop, cook, eat and sleep. Stop anyone for a chat — ask what they ate, for gossip, or for a relic hint. Shop counters, farms and the Town Hall ledger open with E.</p>
   <p><b>Driving:</b> The instrument dashboard shows live km/h, fuel, estimated range, engine coolant temperature, gear and odometer. Tap Radio ON to hear original in-game stations; use the arrows to tune and the volume slider to adjust. The dashboard closes when you get out. The coolant and RPM readings are simplified game simulations, not real vehicle diagnostics.</p>
   <p><b>Movement speed:</b> Open Settings to adjust walking and running from 0.1× to 5×, then use Reset to normal when needed. Your preference saves on this device.</p>
@@ -108,6 +121,7 @@
     <button id="t-jump" aria-label="Jump">⤒</button>
     <button id="t-run" aria-label="Run" aria-pressed="false">🏃</button>
     <button id="t-crouch" aria-label="Crouch" aria-pressed="false">🧎</button>
+    <button id="t-view" aria-label="Change camera view" hidden>🎥</button>
   </div>
 </div>
 <section id="game" role="dialog" aria-labelledby="game-title" hidden>
@@ -140,7 +154,6 @@
 <div id="expedition-compass" hidden aria-live="off"><span id="expedition-arrow">▲</span><span id="expedition-target">Explore the town</span></div>
 <div id="expedition-hint" hidden aria-live="off"></div>
 <div id="expedition-toast" hidden role="status" aria-live="polite"></div>
-<div id="crosshair" aria-hidden="true"></div>
 <script type="module" src="main.js"></script>
 <script type="module" src="ui/release.js"></script>
 </body>
