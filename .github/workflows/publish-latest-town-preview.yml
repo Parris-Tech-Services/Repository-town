@@ -1,0 +1,103 @@
+name: Verified latest Repository Town preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-latest-town-preview.yml']
+permissions:
+  contents: write
+  pages: write
+concurrency:
+  group: repo-town-latest-preview
+  cancel-in-progress: false
+jobs:
+  latest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: site
+      - uses: actions/checkout@v4
+        with:
+          repository: joshualparris/JoshMemory
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+          path: source
+      - name: Pin source
+        id: source
+        run: echo "sha=$(git -C source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: source/repository-town/package-lock.json
+      - name: Build and verify public release
+        working-directory: source/repository-town
+        env:
+          TOWN_SOURCE_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          npm ci --no-audit --no-fund
+          npm run build:release
+          node -e 'const r=require("./dist/public/release.json");if(r.sourceCommit!==process.env.TOWN_SOURCE_COMMIT)throw Error("Wrong release commit");if(!/^[a-f0-9]{64}$/.test(r.contentHash))throw Error("Missing release fingerprint")'
+      - name: Install Chromium
+        working-directory: source/repository-town
+        run: npx playwright install --with-deps chromium
+      - name: Playtest real desktop and mobile WebGL
+        working-directory: source/repository-town
+        env:
+          TOWN_URL: http://127.0.0.1:8091/
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          node tools/serve.mjs dist/public 8091 > /tmp/site.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:8091/ > /dev/null && break
+            sleep 1
+          done
+          node tests/town-rail-yard-browser.mjs
+          node tests/narromine-post-office-browser.mjs
+          node tests/narromine-north-dandaloo-browser.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: latest-town-browser-${{ github.run_id }}
+          path: source/repository-town/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+      - name: Publish to Pages subfolder only (leave stable root untouched)
+        env:
+          EXPECTED: ${{ steps.source.outputs.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(node -p 'require("./source/repository-town/dist/public/release.json").sourceCommit')" = "$EXPECTED"
+          mkdir -p site/latest
+          find site/latest -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
+          cp -a source/repository-town/dist/public/. site/latest/
+          git -C site config user.name 'github-actions[bot]'
+          git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C site add -A latest
+          if ! git -C site diff --cached --quiet; then
+            git -C site commit -m "Tested Town latest preview $EXPECTED"
+            git -C site fetch --depth=50 origin main
+            git -C site rebase FETCH_HEAD
+            git -C site push origin HEAD:main
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent
+      - name: Verify live preview commit
+        env:
+          EXPECTED: ${{ steps.source.outputs.sha }}
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -fsSL "https://parris-tech-services.github.io/Repository-town/latest/release.json?run=$GITHUB_RUN_ID" -o /tmp/live-release.json; then
+              test "$(node -p 'require("/tmp/live-release.json").sourceCommit')" = "$EXPECTED" && exit 0
+            fi
+            sleep 10
+          done
+          exit 1
