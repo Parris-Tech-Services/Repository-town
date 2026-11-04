@@ -36,7 +36,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Mirror the exact live Vercel-approved release, NOT an unapproved newer main.
+          curl -fsSL --retry 3 https://repository-town-claude-complete.vercel.app/release.json -o /tmp/town-approved-release.json
+          approved=$(node -p "require('/tmp/town-approved-release.json').sourceCommit")
+          approved_hash=$(node -p "require('/tmp/town-approved-release.json').contentHash")
+          [[ "$approved" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid production SHA"; exit 1; }
+          [[ "$approved_hash" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::Invalid production fingerprint"; exit 1; }
+          if [[ "$(git -C source rev-parse HEAD)" != "$approved" ]]; then
+            relation=$(gh api "repos/joshualparris/JoshMemory/compare/$approved...main" --jq '.status')
+            [[ "$relation" == "ahead" || "$relation" == "identical" ]] || { echo "::error::Production SHA is not an ancestor of main"; exit 1; }
+            git -C source fetch --depth=1 origin "$approved"
+            git -C source checkout -q --detach "$approved"
+          fi
           sha=$(git -C source rev-parse HEAD)
+          echo "approved_hash=$approved_hash" >> "$GITHUB_OUTPUT"
           previous=$(node -p "require('./site/release.json').sourceCommit")
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           if [[ "$sha" == "$previous" ]]; then
@@ -108,6 +121,7 @@ jobs:
           set -euo pipefail
           export EXPECTED_CONTENT_HASH=$(node -p "require('./source/repository-town/dist/public/release.json').contentHash")
           test -n "$EXPECTED_CONTENT_HASH"
+          test "$EXPECTED_CONTENT_HASH" = "${{ steps.verified.outputs.approved_hash }}" || { echo "::error::Verified build fingerprint differs from live production"; exit 1; }
           node source/repository-town/tools/sync-backup.mjs site
           test "$(node -p "require('./site/release.json').sourceCommit")" = "$EXPECTED_SOURCE_COMMIT"
       - name: Publish only if pinned commit is still main
@@ -128,6 +142,11 @@ jobs:
             fi
             echo "::notice::Main advanced to $current; publishing last fully verified ancestor $RELEASE_SHA"
           fi
+          # Production may advance during the long QA build; never mirror a
+          # different release or a successor which has not passed this gate.
+          curl -fsSL --retry 3 https://repository-town-claude-complete.vercel.app/release.json -o /tmp/town-approved-at-publish.json
+          test "$(node -p "require('/tmp/town-approved-at-publish.json').sourceCommit")" = "$RELEASE_SHA" || { echo "::error::Production source changed during backup QA"; exit 1; }
+          test "$(node -p "require('/tmp/town-approved-at-publish.json').contentHash")" = "${{ steps.verified.outputs.approved_hash }}" || { echo "::error::Production fingerprint changed during backup QA"; exit 1; }
           git -C site config user.name 'github-actions[bot]'
           git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C site add -A
@@ -179,3 +198,5 @@ jobs:
 # Retry storybook CC0 five-rig release following explicit bicycle-ground-height consistency fix in JoshMemory/main.
 
 # 2026-10-29 consolidation backup catch-up: main 6e67dd300b86ab943b9ebf0fa0298cba73ebe477 (PR #283 plus checkpoint), run independent full QA before publication. No direct backup overwrite.
+
+# 2026-11-04: safely catch up Dandaloo Street PR #336: pin live production release SHA/hash and independently verify before mirroring. This workflow file-only push is an authorised one-off sync request.
