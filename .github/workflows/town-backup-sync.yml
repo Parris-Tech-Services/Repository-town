@@ -203,3 +203,4 @@ jobs:
 # 2026-11-05 approved live Narromine release mirror: 13189a448493ec8ce2fb021b4c43f19286ae31d1. Verified Vercel production release manifest; execute independent full test, exact hash reconciliation and safe Pages sync.
 
 # 2026-11-05 approved mirror retry: Vercel READY source 8ad2e5a7f283cab4f91f40756dc93dbdfd655785. Earlier run 41963771927 used pre-fix sync helper and rejected independently validated latest/ assets; current canonical helper preserves latest/ after verifying its hashes. Do not mutate legacy preview. Match exact live sourceCommit and contentHash before commit.
+# Retry approved production-to-Pages fingerprint mirror 2026-11-06; source SHA pinned and verified by workflow.
