@@ -110,10 +110,15 @@ jobs:
           cp -a source/repository-town/dist/public/. site/latest/
           # Only locally generated game frames and explicitly licensed aerial references
           # are included. Do not scrape, screenshot or store Google Street View pixels.
-          mkdir -p site/latest/photo-compare
-          cp -a source/repository-town/test-results/narromine-photo-compare/. site/latest/photo-compare/
+          # Publish only the intended static HTML and game-rendered PNGs, not
+          # scratch screenshots, source-machine paths or raw audit data.
+          mkdir -p site/latest/photo-compare/screenshots
+          cp source/repository-town/test-results/narromine-photo-compare/report.html site/latest/photo-compare/
+          cp source/repository-town/test-results/narromine-photo-compare/index.html site/latest/photo-compare/
+          cp source/repository-town/test-results/narromine-photo-compare/screenshots/*.png site/latest/photo-compare/screenshots/
           test -s site/latest/photo-compare/report.html
           test -s site/latest/photo-compare/index.html
+          test "$(find site/latest/photo-compare/screenshots -name '*.png' | wc -l)" -eq 48
           git -C site config user.name 'github-actions[bot]'
           git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C site add -A latest
