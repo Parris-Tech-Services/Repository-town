@@ -144,3 +144,4 @@ jobs:
 # 2026-11-05: approved manual recovery trigger to rebuild independent /latest/ from current JoshMemory main; preserve stable Pages root and privacy/build/browser gates.
 # 2026-11-05 02:49Z recovery: rebuild independent Pages /latest/ from the latest canonical JoshMemory/main (614c9af27821746df7f3e95978dea177b0fad921), preserve stable root and full release/privacy/real-browser gates.
 # 2026-11-05 post-402 quota recovery: refresh verified Pages /latest/ from tested JoshMemory main (13189a448493ec8ce2fb021b4c43f19286ae31d1). Do not touch stable root or bypass real-browser/photo/privacy gates.
+# 2026-11-05 15:01 AEDT: verified Pages fallback catch-up requested after Vercel Hobby API 402; rebuild from canonical main 257d774363235ce68648aaa0904e6165f52e30d7 using all existing safety/browser/photo gates; preserve root and parallel agents' source.
