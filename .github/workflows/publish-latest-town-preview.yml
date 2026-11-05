@@ -62,6 +62,35 @@ jobs:
           node tests/town-rail-yard-browser.mjs
           node tests/narromine-post-office-browser.mjs
           node tests/narromine-north-dandaloo-browser.mjs
+      - name: Generate and validate HUD-clean Narromine photo-comparison workspace
+        working-directory: source/repository-town
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { runNarrominePhotoCompare } from './tools/narromine-visual-qa/photo-compare/run-photo-compare.mjs';
+          // Host in /Repository-town/latest/photo-compare: relative game path
+          // keeps the live iframe and saved game on the SAME Pages origin.
+          // No Google API key is injected; the viewer explicitly asks its user.
+          const result = await runNarrominePhotoCompare({
+            outDir: 'test-results/narromine-photo-compare',
+            liveGameUrl: '../index.html',
+            sampleFrames: 6,
+            embedLocalReferences: true,
+          });
+          const summary = result.manifest.summary;
+          if (!summary.passed || summary.passedCaptures !== 48 || summary.totalCaptures !== 48)
+            throw new Error('Comparison captures incomplete: ' + JSON.stringify(summary));
+          const html = fs.readFileSync(result.reportPath, 'utf8');
+          if (/AIza[0-9A-Za-z_-]{35}/.test(html)) throw new Error('Refusing to publish embedded Google API key');
+          if (!html.includes('../index.html')) throw new Error('Game iframe must use same-origin Pages preview');
+          console.log('PASS hosted photo comparison: 48 HUD-clean game screenshots, exact game-relative path, no embedded API key');
+          NODE
+          node tests/narromine-visual-qa/photo-compare/photo-compare.mjs
+          test -s test-results/narromine-photo-compare/report.html
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -79,6 +108,12 @@ jobs:
           mkdir -p site/latest
           find site/latest -mindepth 1 -maxdepth 1 -exec rm -rf -- {} +
           cp -a source/repository-town/dist/public/. site/latest/
+          # Only locally generated game frames and explicitly licensed aerial references
+          # are included. Do not scrape, screenshot or store Google Street View pixels.
+          mkdir -p site/latest/photo-compare
+          cp -a source/repository-town/test-results/narromine-photo-compare/. site/latest/photo-compare/
+          test -s site/latest/photo-compare/report.html
+          test -s site/latest/photo-compare/index.html
           git -C site config user.name 'github-actions[bot]'
           git -C site config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git -C site add -A latest
