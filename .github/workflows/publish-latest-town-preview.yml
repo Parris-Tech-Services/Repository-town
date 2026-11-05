@@ -143,3 +143,4 @@ jobs:
           exit 1
 # 2026-11-05: approved manual recovery trigger to rebuild independent /latest/ from current JoshMemory main; preserve stable Pages root and privacy/build/browser gates.
 # 2026-11-05 02:49Z recovery: rebuild independent Pages /latest/ from the latest canonical JoshMemory/main (614c9af27821746df7f3e95978dea177b0fad921), preserve stable root and full release/privacy/real-browser gates.
+# 2026-11-05 post-402 quota recovery: refresh verified Pages /latest/ from tested JoshMemory main (13189a448493ec8ce2fb021b4c43f19286ae31d1). Do not touch stable root or bypass real-browser/photo/privacy gates.
