@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "sourceCommit": "ea53c7d4c66997e3eb0bbba4026176efef20619c",
-  "contentHash": "c86755f8127f73aa5aefb628c24e7bb474c1815579b970e27453c7a7f80e7f69",
+  "sourceCommit": "a5c5cab787c2d53d287628eaedf7e67b0963e61a",
+  "contentHash": "c93a59ec8507ec054fc9e26d18a2b840eb0397a8006fcb18ea7a2056b9a13504",
   "production": "https://repository-town-claude-complete.vercel.app/",
   "staging": "https://repository-town-claude-playtest.vercel.app/",
   "backup": "https://parris-tech-services.github.io/Repository-town/",
@@ -1155,7 +1155,7 @@
     "ui/compass.js": "c2ba1b51ab61b27cdbe60d0cc4234ffdf64cabfa0f09401b368ad8d53040b0cb",
     "ui/context-labels.js": "1a557bd2b2b4a605411bf546fc92fdada731dae8fc92b9086c7c9b6f5481c9c8",
     "ui/discovery-log.js": "67c8a258932335102a7de8b9d5b43bc08a9a3810d8f4aeb6bae9a712bb6f7fc5",
-    "ui/driving-dashboard.css": "40c0291c3159e1b1ac4bcf0aadf3a3b88d1185c292685b4d58f156ffc9589385",
+    "ui/driving-dashboard.css": "2aad2dd7c1f3bffa1e3788c98401adc92ef8a3f120932e072266379b5aa16185",
     "ui/driving-dashboard.js": "f0de165d9e5ab773ad794afb4bb70a1f4b80b21cfdda8ca1ccb4c8e5fd351c46",
     "ui/economy-panels.js": "02cfd1221deaf18f51c23b70d8064819eb27a3b16fb36f9178ee863d2070281a",
     "ui/electrical-pilot-panel.js": "d3a74857b69aa357377a25424d599e450f10094365ed1eba0ea193f7d52248d7",
