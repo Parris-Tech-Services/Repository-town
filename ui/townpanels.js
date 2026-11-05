@@ -1,3 +1,4 @@
+import {populationHTML} from './population-panel.js';
 import {pubStandards,pubStandardsAction} from '../world/pub-standards.js';
 import {pubStandardsPanel} from './pub-standards-panel.js';
 // Panels for town life: shop counters, farms, the Town Ledger and the town guide, plus
@@ -120,6 +121,7 @@ function civicPanel(life, id, again) {
     rows.push(`<p><b>Household bills:</b> rent ${money(ov.rentArrears)} and power ${money(ov.powerArrears)} overdue · rent $8 and power $2 are charged each morning from your wallet, then savings.</p>`);
     if (cr.journal.length) rows.push(`<p class="dim"><b>Recent entries:</b></p><ul class="dim">${cr.journal.map((e) => `<li>Day ${e.day} · ${esc(e.text)}</li>`).join('')}</ul>`);
   }
+  { const nc = life.narromineCommuters?.(id) || []; if (nc.length) rows.push(`<p><b>Working today from Narromine:</b> ${nc.map((p) => esc(p.name)).join(', ')} (drove in on the Mitchell Highway)</p>`); }
   rows.push(`<p><b>Visiting hours:</b> ${esc(hours(p))} · <b>Entry:</b> ${esc(facilityAccess(life,p).reason === 'unstaffed' ? 'waiting for staff' : facilityAccess(life,p).allowed ? 'open' : 'closed')} · <b>Staff:</b> ${staff.map((v) => esc(`${v.name} (${v.job})`)).join(', ') || 'automated'}</p>`);
   const act = (label, fn) => ({ label, run: () => { const msg = fn(); return { ...again(), body: `<p><b>${esc(msg)}</b></p>` + again().body }; } });
   const actions = [];
@@ -232,6 +234,7 @@ function placePanelBase(life, id) {
   const rows = [];
   if (id === 'pub') rows.push(`<p role="status"><b>Adult ID: ${pubStandards(life).verifiedAdult ? 'confirmed — your character is 18+.' : 'not confirmed.'}</b> ${pubStandards(life).verifiedAdult ? 'You can now order alcohol, subject to service checks.' : 'Tap “Confirm character is 18+” above before ordering alcohol. This is a game setting; no real ID upload is needed.'}</p>`);
   rows.push(`<p>${esc(ABOUT[id] || '')}</p>`);
+  { const nc = life.narromineCommuters?.(id) || []; if (nc.length) rows.push(`<p><b>Working today from Narromine:</b> ${nc.map((p) => esc(p.name)).join(', ')} (drove in on the Mitchell Highway)</p>`); }
   rows.push(`<p><b>Visiting hours:</b> ${esc(hours(p))} · ${open ? '<span class="ok">open for entry</span>' : `<span class="dim">${esc(access.reason === 'unstaffed' ? 'awaiting staff' : 'closed to visitors')}</span>`} · it's ${esc(life.time())}</p>`);
   rows.push(`<p><b>Counter:</b> ${esc(service.message)}</p>`);
   if (p.kind === 'farm') {
@@ -335,7 +338,7 @@ export function ledgerPanel(life) {
     e.lines.map(line=>'<p><b>'+esc(line.speaker)+':</b> “'+esc(line.text)+'”</p>').join('')+'</details>').join('');
   return {
     title: `Town Ledger · Day ${L.day}, ${L.time}`, wide: true,
-    body: `<p><b>Population:</b> ${L.population} villagers · ${L.atWork} at work · ${L.asleep} asleep · ${life.homes.length} households.</p>
+    body: `${populationHTML(life)}<p><b>Economic roster:</b> ${L.population} villagers · ${L.atWork} at work · ${L.asleep} asleep.</p>
       <h3>Today</h3>
       <p><b>Harvested:</b> ${n(s.harvested)}<br><b>Milled:</b> ${s.milled} bags of flour · <b>Baked:</b> ${s.baked} loaves and pies<br>
       <b>Deliveries:</b> ${s.deliveries} truckloads — ${n(s.delivered)}<br><b>Sold in shops:</b> ${n(s.sold)}<br>
