@@ -101,3 +101,4 @@ jobs:
             sleep 10
           done
           exit 1
+# 2026-11-05: approved manual recovery trigger to rebuild independent /latest/ from current JoshMemory main; preserve stable Pages root and privacy/build/browser gates.
