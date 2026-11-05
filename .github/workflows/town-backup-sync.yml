@@ -200,3 +200,4 @@ jobs:
 # 2026-10-29 consolidation backup catch-up: main 6e67dd300b86ab943b9ebf0fa0298cba73ebe477 (PR #283 plus checkpoint), run independent full QA before publication. No direct backup overwrite.
 
 # 2026-11-04: safely catch up Dandaloo Street PR #336: pin live production release SHA/hash and independently verify before mirroring. This workflow file-only push is an authorised one-off sync request.
+# 2026-11-05 approved live Narromine release mirror: 13189a448493ec8ce2fb021b4c43f19286ae31d1. Verified Vercel production release manifest; execute independent full test, exact hash reconciliation and safe Pages sync.
