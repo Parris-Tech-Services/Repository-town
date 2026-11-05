@@ -13,7 +13,7 @@ export const DANDALOO_STREETSCAPE_EVIDENCE = Object.freeze({
     dualRoadPosition: 'mapped',
     medianFootprint: 'derived from mapped road-edge clearance; requires survey',
     angleParkingSpacing: 'approximate, 60-degree illustrative',
-    lampsTreesPalmPositions: 'approximate photo-based visual placement',
+    lampsTreesPalmPositions: 'unverified individual positions: not rendered pending object-level evidence',
   }),
 });
 
@@ -90,21 +90,59 @@ export function planDandalooStreetscape(streets) {
         b: [b.ex + east.width / 2 - 3.87, z - 2.15], side: 'east' });
     }
   }
-  // Midpoint coordinates follow OSM. These z locations are indicative ONLY:
-  // photogrammetric tree inventories and actual bay surveys have not been done.
-  const put = (dest, z, where, kind) => {
-    const r = at(z);
-    const x = where === 'median' ? r.cx
-      : where === 'west' ? r.wx - west.width / 2 - 1.35
-      : r.ex + east.width / 2 + 1.35;
-    dest.push({ x, z, where, kind });
-  };
-  for (const z of [-1019, -1073, -1137]) put(trees, z, 'median', z === -1073 ? 'palm' : 'deciduous');
-  // Keep the existing palm/sculpture at Kierath's (~z -889) in narromine.js.
-  for (const z of [-894, -1004, -1086, -1143]) put(trees, z, 'west', 'flowering');
-  for (const z of [-916, -1038, -1114, -1155]) put(trees, z, 'east', 'deciduous');
-  for (const z of [-911, -1028, -1126]) put(lamps, z, 'median', 'swan-neck');
-  for (const z of [-902, -1048, -1140]) put(lamps, z, 'west', 'swan-neck');
-  for (const z of [-927, -1066, -1138]) put(lamps, z, 'east', 'swan-neck');
+  // NR-REAL-001: road centrelines and photographs of the general street do not
+  // establish individual object positions. The former 11 trees and nine lamps
+  // used indicative z coordinates, not a geolocated inventory. Keep these lists
+  // empty until each object has dated location-specific evidence. This is NOT a
+  // claim that real northern Dandaloo Street has no vegetation or streetlights.
+  // Separately evidenced site-owned vegetation is rendered by its own builder.
   return { medians, kerbs, pavers, parking, trees, lamps, source: DANDALOO_STREETSCAPE_EVIDENCE };
+}
+
+// ── South Dandaloo Street (single carriageway): Narromine Hotel → St Mary's ─────────────────────
+// OSM maps this stretch as one 9-m secondary road from the Burraway split (~z -853) south past
+// Derribong Avenue to Terangion Street. Kerbs follow the mapped road edge; street trees, swan-neck
+// lamps and the east-side power line are placed at regular, ESTIMATED spacing on the verges and are
+// skipped wherever a cross street, driveway, mapped building or detailed lot would be in the way.
+export const SOUTH_RANGE = Object.freeze({ upperZ: -846, lowerZ: -262 });
+export const SOUTH_EVIDENCE = Object.freeze({
+  alignment: 'OpenStreetMap Dandaloo Street secondary centreline (2026-11-03)',
+  spacing: 'none: estimated trees, lamps and poles removed (owner direction 4 Nov 2026); kerbs follow the mapped road edge',
+  note: 'Josh compares by eye with Street View; no Street View imagery is used as data.',
+});
+
+export function findDandalooSouth(streets) {
+  const pieces = streets.filter(s => s.name === 'Dandaloo Street' && s.kind === 'secondary');
+  const pts = pieces.flatMap(s => s.pts).filter(p => p[1] >= SOUTH_RANGE.upperZ - 10 && p[1] <= SOUTH_RANGE.lowerZ + 160);
+  if (pts.length < 4) throw Error('South Dandaloo Street centreline not found');
+  const uniq = [...new Map(pts.map(p => [p[0].toFixed(2) + ',' + p[1].toFixed(2), p])).values()];
+  return { width: pieces[0].width, pts: uniq.sort((a, b) => a[1] - b[1]) };
+}
+
+// clear(x, z, r): true when a point (with radius r) is free of buildings, lots and other roads.
+export function planDandalooSouth(streets, clear = () => true) {
+  const road = findDandalooSouth(streets), half = road.width / 2, kerbs = [], trees = [], lamps = [], poles = [];
+  // Cross streets and driveways meeting Dandaloo: decorations keep 10 m away from their mouths.
+  const mouths = streets.filter(s => s.name !== 'Dandaloo Street' && s.pts.some(([x, z]) => {
+    const cx = roadXAtZ(road, z); return cx !== null && z >= SOUTH_RANGE.upperZ && z <= SOUTH_RANGE.lowerZ && Math.abs(x - cx) < half + 3;
+  })).map(s => s.pts.find(([x, z]) => { const cx = roadXAtZ(road, z); return cx !== null && Math.abs(x - cx) < half + 3; }));
+  const nearMouth = (z, m = 10) => mouths.some(p => Math.abs(p[1] - z) < m);
+  // Unit normal pointing east (+x side) at z, from the local road direction.
+  const frame = (z) => { const cx = roadXAtZ(road, z), cx2 = roadXAtZ(road, z + 1); if (cx === null || cx2 === null) return null;
+    const dx = cx2 - cx, l = Math.hypot(dx, 1); return { cx, nx: 1 / l, nz: -dx / l }; };
+  for (let z = SOUTH_RANGE.upperZ; z < SOUTH_RANGE.lowerZ; z += 6) {
+    const zz = Math.min(z + 6, SOUTH_RANGE.lowerZ), a = frame(z), b = frame(zz);
+    if (!a || !b || nearMouth((z + zz) / 2, 6)) continue;
+    for (const side of [-1, 1]) {
+      // No kerb where the edge runs through sealed ground (e.g. the Narromine Hotel forecourt).
+      const mx = (a.cx + b.cx) / 2 + side * (half + 0.08) * a.nx, mz = (z + zz) / 2 + side * (half + 0.08) * a.nz;
+      if (!clear(mx, mz, 0, 'kerb')) continue;
+      kerbs.push({ a: [a.cx + side * (half + 0.08) * a.nx, z + side * (half + 0.08) * a.nz],
+      b: [b.cx + side * (half + 0.08) * b.nx, zz + side * (half + 0.08) * b.nz], side: side < 0 ? 'west' : 'east' });
+    }
+  }
+  // Only mapped geometry is built. Street trees, lamps and power poles were spaced by estimate,
+  // and the owner's Street View check (4 Nov 2026) found the trees were not there. Add each
+  // feature back only at a surveyed position (OSM node, LiDAR detection or photo-matched point).
+  return { kerbs, trees, lamps, poles, source: SOUTH_EVIDENCE };
 }

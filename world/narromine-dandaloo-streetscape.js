@@ -1,8 +1,8 @@
 // Dandaloo Street streetscape props. Visually restrained and tile-batched through
 // buildNarromine's existing push() material buckets; no duplicate road/asphalt meshes.
-// Photo-evidenced styles but individual furniture/tree positions remain approximate.
+// Furniture needs individual location evidence; unsupported placements stay unrendered.
 import * as THREE from 'three';
-import { planDandalooStreetscape } from './narromine-dandaloo-streetscape-data.js';
+import { planDandalooStreetscape, planDandalooSouth } from './narromine-dandaloo-streetscape-data.js';
 
 const KERB = 0xb9b4aa, PARK_LINE = 0xeee9dc, LAMP = 0x47604b;
 const addCylinder = (push, colour, topR, botR, h, x, y, z, sides = 8) => {
@@ -85,7 +85,22 @@ function makeSwanNeckLamp(push, item) {
   addCylinder(push, 0xe5e2ce, 0.28, 0.28, 0.045, x + side * 1.80, 5.73, z);
 }
 
-export function buildDandalooStreetscape({ streets, push, box, flatPoly, strip }) {
+// Timber power pole with a cross-arm and three insulators; wires sag between consecutive poles.
+function makePowerPole(push, p) {
+  addCylinder(push, 0x6e5b45, 0.13, 0.17, 10.5, p.x, 5.25, p.z, 8);
+  const arm = new THREE.BoxGeometry(0.12, 0.12, 2.2); arm.translate(p.x, 9.9, p.z); push(0x5f4e3b, arm);
+  for (const dz of [-0.9, 0, 0.9]) addCylinder(push, 0xd8dcd9, 0.05, 0.06, 0.18, p.x, 10.05, p.z + dz, 6);
+}
+function makeWires(push, a, b) {
+  for (const dz of [-0.9, 0, 0.9]) {
+    const n = 8, pts = [];
+    for (let i = 0; i <= n; i++) { const t = i / n, sag = 0.55 * 4 * t * (1 - t);
+      pts.push([a.x + (b.x - a.x) * t, 10.1 - sag, a.z + dz + (b.z - a.z) * t]); }
+    for (let i = 1; i < pts.length; i++) addArm(push, 0x2b2b2b, pts[i - 1], pts[i], 0.012);
+  }
+}
+
+export function buildDandalooStreetscape({ streets, push, box, flatPoly, strip, clear }) {
   const plan = planDandalooStreetscape(streets);
   // Asphalt is already produced by the exact polygon-clip road renderer; do not
   // restore the old overlapping road strips that caused z-fighting.
@@ -93,18 +108,18 @@ export function buildDandalooStreetscape({ streets, push, box, flatPoly, strip }
   for (const p of plan.pavers) flatPoly(0xa77f6e, p.pts, 0.112);
   for (const k of plan.kerbs) strip(KERB, ...k.a, ...k.b, 0.15, 0.129, 0.12);
   for (const p of plan.parking) strip(PARK_LINE, ...p.a, ...p.b, 0.105, 0.104, 0.022);
-  // Trimmed, deliberately interrupted median hedges — never another solid wall.
-  for (const band of [-994, -1042, -1092, -1149]) {
-    const m = plan.medians.find(item => item.pts.some(p => Math.abs(p[1] - band) < 5));
-    if (!m) continue;
-    const x = m.pts.reduce((s, p) => s + p[0], 0) / m.pts.length;
-    box(0x56743c, 0.72, 0.53, 2.6, x, 0.36, band);
-    box(0x739454, 0.83, 0.16, 2.7, x, 0.66, band);
-  }
+  // No synthetic hedge bands: their four former coordinates had no individual
+  // location evidence. Restore only with a documented object-level survey.
   for (const item of plan.trees) {
     if (item.kind === 'palm') makePalm(push, item);
     else makeFloweringTree(push, item, item.kind === 'flowering');
   }
   for (const item of plan.lamps) makeSwanNeckLamp(push, item);
-  return plan;
+  // South of the Burraway split: kerbs, verge trees, lamps and the east-side power line.
+  const south = planDandalooSouth(streets, clear);
+  for (const k of south.kerbs) strip(KERB, ...k.a, ...k.b, 0.15, 0.129, 0.12);
+  for (const item of south.trees) makeFloweringTree(push, item, item.kind === 'flowering');
+  for (const item of south.lamps) makeSwanNeckLamp(push, item);
+  south.poles.forEach((p, i) => { makePowerPole(push, p); if (i && Math.abs(p.z - south.poles[i - 1].z) < 90) makeWires(push, south.poles[i - 1], p); });
+  return { ...plan, south };
 }

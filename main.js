@@ -28,7 +28,13 @@ import { buildYeovalInterior } from './world/yeoval-interior.js';
 import { buildMasterplan, PLAN_HOMES } from './world/masterplan-built.js';
 import { RESIDENT_STYLES } from './world/resident-models.js';
 import { buildNarromine } from './world/narromine.js';
-import { NARROMINE_POST_OFFICE_SAVE_ID, NARROMINE_POST_OFFICE_ENTRANCE, nearNarrominePostOfficeDoor, buildNarrominePostOfficeInterior } from './world/narromine-post-office.js';
+import { createNarromineTrains } from './world/narromine-trains.js';
+import { createNarromineTraffic } from './world/narromine-traffic.js';
+import { createTownRailYard } from './world/town-rail-yard.js';
+import { NARROMINE_POST_OFFICE_SAVE_ID, NARROMINE_POST_OFFICE_ENTRANCE, nearNarrominePostOfficeDoor, buildNarrominePostOfficeInterior, createNarrominePostalOutdoorActor } from './world/narromine-post-office.js';
+import { NARROMINE_POSTAL_PERSON, POSTAL_WALK_ROUTE_LOCAL, postalState, postalDayPlan, postalFormatTime } from './world/narromine-postal-character.js';
+import { NARROMINE_COLES_SAVE_ID, NARROMINE_COLES_ENTRANCE, COLES_INTERPRETIVE_PLAN, nearNarromineColesDoor, colesOpen, buildNarromineColesInterior } from './world/narromine-coles.js';
+import { toWorld } from './world/narromine-layout.js';
 import { ST_MARYS_SAVE_ID, ST_MARYS_ENTRANCE, nearStMarysDoor, buildStMarysInterior } from './world/narromine-st-marys.js';
 import { ARRIVAL as NARROMINE_ARRIVAL, PLACES as NARROMINE_PLACES } from './world/narromine-layout.js';
 import { buildCountryInterior,countryEntrance,countryExitPose } from './world/country-interiors.js';
@@ -202,6 +208,9 @@ async function start() {
   // Town life: farms, shops, trucks and 32 villagers with jobs and meals (src/world/life.js).
   const townLife = createTownLife({ scene, town, makeLabel, sky, hemi, sun, fog });
   const life = townLife.life;
+  // Separate fictional shunting siding: never controls Narromine freight or town main-line gates.
+  const yard = createTownRailYard(town.group, life);
+  let yardKeyQ = false, yardKeyR = false;
   // Real existing southern house interiors become ordinary share-homes for fictional
   // care employees. Leave all established villager homes and save IDs untouched.
   const careWorkerList=[...careStaff('bracken-house'),...careStaff('yeoval-aged-care')].sort((a,b)=>a.staffRoleIndex-b.staffRoleIndex||a.role.localeCompare(b.role)||a.facility.localeCompare(b.facility));
@@ -225,6 +234,18 @@ async function start() {
   const masterplan = buildMasterplan(town.group, makeLabel);
   // Narromine, 40 km west in reality, ~90 s along the Mitchell Highway here (world/narromine.js).
   const narromine = buildNarromine(town.group, makeLabel);
+  // Narromine railway: sleepers and rails on the mapped lines and a drivable grain train in the yard.
+  const trains = createNarromineTrains(narromine.group);
+  // Road traffic at the levels the NSW crossing register records (Dandaloo St 7,000 vehicles a day).
+  const narromineTraffic = createNarromineTraffic(narromine.group, { blocked: (x, z) => trains.crossingClosedNear(x, z) });
+  const narrominePostalOutdoor=createNarrominePostalOutdoorActor(narromine.group,makeLabel);
+  const [postalHomeX,postalHomeZ]=toWorld(POSTAL_WALK_ROUTE_LOCAL[0]);
+  narromine.spots.push({key:'narromine:leah-home',label:'Leah Bennett’s fictional home',
+    pos:new THREE.Vector3(postalHomeX,0,postalHomeZ),
+    text:'Exact single-storey mapped house near Terangion Street (West), OSM footprint #203. Fictional occupancy: not a real resident, private street number or measured home interior.'});
+  narromine.spots.push({key:'narromine:coles:entrance',label:'Enter Coles Narromine · 76 Dandaloo Street',
+    pos:new THREE.Vector3(NARROMINE_COLES_ENTRANCE.x,0,NARROMINE_COLES_ENTRANCE.z),colesEnter:true});
+
   // Real building and tree meshes cast; ground/roads/paving receive. The light
   // follows the player, including when exploring mapped Narromine.
   const shadowCoverage = configureOutdoorShadows(town, narromine, masterplan, townLife);
@@ -316,6 +337,9 @@ async function start() {
   // A vehicle is approx 2.2m wide and 6.6m long; use a conservative
   // rotated-axis AABB for the town's existing 2D collision engine.
   townWorld.dynamic = () => [
+    ...trains.colliders(),
+    ...(player.pos.x < -2640 ? narromineTraffic.colliders(player.pos) : []),
+    ...yard.colliders(),
     ...life.trucks.map(tr => {
       const sn = Math.abs(Math.sin(tr.heading)), cs = Math.abs(Math.cos(tr.heading));
       const hx = 1.18*cs + 3.4*sn, hz = 1.18*sn + 3.4*cs;
@@ -342,6 +366,20 @@ async function start() {
   captureButton.onclick = () => { captureButton.blur(); input.toggleMouseCapture(); };
   syncMouseCapture(false);
   if (input.touch) $('touch').hidden = false;
+  // Two accessible touch controls appear only in the shunter; desktop Q/R use
+  // the same actions. They never alter the existing car or Narromine train UI.
+  const yardControls = document.createElement('div');
+  yardControls.setAttribute('role', 'group');
+  yardControls.setAttribute('aria-label', 'Rail yard shunting controls');
+  yardControls.style.cssText = 'position:fixed;right:12px;bottom:120px;z-index:60;gap:8px;display:none;flex-direction:column;max-width:44vw';
+  for (const [label, kind] of [['🔗 Couple / uncouple', 'couple'], ['📦 Load / stage', 'load']]) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.textContent = label;
+    button.style.cssText = 'border:1px solid #d1b565;border-radius:10px;background:#182b38;color:white;padding:10px;min-height:44px;font:600 13px system-ui';
+    button.addEventListener('click', () => { status(yard.action(kind)); button.blur(); });
+    yardControls.appendChild(button);
+  }
+  document.body.appendChild(yardControls);
   loadFurniture().catch(() => {});   // real furniture models; interiors fall back to boxes until they arrive
   const player = new Player(camera);
   let movementSpeed=loadMovementSpeed(localStorage);
@@ -363,6 +401,11 @@ async function start() {
   showSpeedSetting();
   const driving=createPlayerDriving(life,scene,townWorld,player,camera,input);
   const drivingDashboard=createDrivingDashboard();
+  // Lane assist on/off (also K). Lives beside the dashboard button, top-left, clear of the compass.
+  const laneBtn=document.createElement('button');laneBtn.id='drive-lane-toggle';laneBtn.type='button';laneBtn.hidden=true;
+  const showLane=()=>{laneBtn.textContent='Lane assist: '+(driving.laneAssist?'ON':'OFF');laneBtn.setAttribute('aria-pressed',String(driving.laneAssist));};
+  laneBtn.addEventListener('click',()=>{status(driving.toggleLaneAssist());showLane();});
+  document.body.appendChild(laneBtn);showLane();
   const tableOrder = document.createElement('button');
   tableOrder.id='btn-table-order';tableOrder.type='button';
   tableOrder.textContent='🍽 Order at table';
@@ -648,7 +691,7 @@ async function start() {
   // postal counter, shelves and public circulation; no invented real staff names.
   function enterNarrominePostOffice() {
     if(mode!=='town'||driving.driving)return false;
-    const built=buildNarrominePostOfficeInterior(makeLabel);
+    const built=buildNarrominePostOfficeInterior(makeLabel,life.day,life.minute);
     inside={house:{coordinate:NARROMINE_POST_OFFICE_SAVE_ID,name:'Narromine Post Office',
       address:'74 Dandaloo Street, Narromine NSW',kind:'post_office'},
       ...built,floorIndex:0,floors:null};
@@ -661,6 +704,32 @@ async function start() {
     closePanel();npcChat.close();ambience.door();
     $('card').hidden=true;delete $('card').dataset.coord;
     status('Inside Narromine Post Office · 74 Dandaloo Street. Visit the postal counter, PO boxes or packing bench. Walk back through the front doorway or tap Exit to return outside.');
+    return true;
+  }
+
+  function enterNarromineColes(ignoreHours=false){
+    if(mode!=='town'||driving.driving)return false;
+    const open=colesOpen(life.day,life.minute);
+    if(!ignoreHours && open!==true) {
+      const now=performance.now();
+      if(lastDeniedEntrance!=='narromine-coles'||now-lastDeniedTime>3500) {
+        status(open===null?'Coles public holiday hours are unverified. The game will not invent them.':'Coles Narromine is closed according to its published regular trading hours.');
+        lastDeniedEntrance='narromine-coles';lastDeniedTime=now;
+      }
+      return false;
+    }
+    const built=buildNarromineColesInterior(makeLabel,life.day,life.minute);
+    inside={house:{coordinate:NARROMINE_COLES_SAVE_ID,name:'Coles Narromine',address:'76 Dandaloo Street, Narromine NSW',kind:'supermarket'},
+      ...built,floorIndex:0,floors:null};
+    scene.add(built.group);town.group.visible=false;
+    scene.background.set(INDOOR);scene.fog=null;
+    world=new CollisionWorld(built.colliders);
+    player.place(built.spawn.x,built.spawn.z,0);
+    mode='house';player.baseHeight=0;floorDoorCooldown=.65;
+    updateFloorBadge();$('btn-exit').hidden=false;
+    closePanel();npcChat.close();ambience.door();
+    $('card').hidden=true;delete $('card').dataset.coord;
+    status('Inside Coles Narromine. Walk the produce section, pantry aisles, chilled cabinets and checkouts. An interpretation, not a surveyed floor plan or real payment system.');
     return true;
   }
 
@@ -689,10 +758,28 @@ async function start() {
     boxes:{title:'PO boxes',body:'Post Office boxes provide a separate, secure mailing address. Ask about availability and charges at the real location; the in-game box doors contain no private information.'},
     services:{title:'Other counter services',body:'Many post offices offer retail stationery, money orders or bill payment services, but availability, opening hours and eligibility vary. The in-game counter is a visitor information experience, not a real financial service.'},
   };
+  function narrominePostalPersonPanel(topic=null){
+    const p=NARROMINE_POSTAL_PERSON,s=postalState(life.day,life.minute);
+    const topics={work:p.conversation.work,home:p.conversation.home,family:p.conversation.family,
+      groceries:p.conversation.groceries,offDuty:p.conversation.offDuty,boundaries:p.conversation.boundaries};
+    const summary='<p><b>'+esc(p.name)+'</b> · '+p.age+' · '+esc(p.job)+'</p>'+
+      '<p><b>Currently:</b> '+esc(s.activity)+' ('+esc(s.place)+', '+postalFormatTime(s.since)+'–'+postalFormatTime(s.until)+')</p>'+
+      '<p><b>Personality:</b> '+esc(p.personality)+'</p>'+
+      '<p><b>Home:</b> one specific mapped single-storey house near Terangion Street (West), OSM #203. Fictional occupancy; no private street number claimed.</p>'+
+      '<p><b>Family:</b> single, no children; lives with Mabel, her elderly rescue kelpie-cross. Her mum and brother live in Dubbo.</p>';
+    const schedule=postalDayPlan(life.day).map(a=>'<li>'+postalFormatTime(a.start)+'–'+postalFormatTime(a.end)+' · '+esc(a.activity)+'</li>').join('');
+    const body=topic==='schedule'?summary+'<h3>Today’s complete routine</h3><ul>'+schedule+'</ul>':
+      summary+'<p>'+esc(topics[topic]||p.conversation.hello)+'</p>';
+    return {title:'Leah Bennett · fictional Narromine resident',body,
+      actions:[{label:'Today’s precise timetable',run:()=>narrominePostalPersonPanel('schedule')},
+        ...Object.keys(topics).map(id=>({label:id==='offDuty'?'Life outside work':id.charAt(0).toUpperCase()+id.slice(1),
+          run:()=>narrominePostalPersonPanel(id)}))]};
+  }
   function narrominePostalCounterPanel(topic=null){
     const t=POSTAL_TOPICS[topic];
+    const staff=postalState(life.day,life.minute);
     return {title:'Narromine Post Office · '+(t?.title||'Service counter'),
-      body:'<p>'+esc(t?.body||'Welcome to the Narromine postal counter. Choose the service you want to learn about. The interior is an evidence-informed interpretation rather than a surveyed floor plan; no real payments, mailing, tracking or ID checks occur.')+'</p>',
+      body:'<p>'+esc(staff.atCounter?'Leah Bennett is serving the counter.':staff.atPostOffice?'Leah is taking a break or working behind the scenes. Another fictional colleague covers.':'Leah is off duty. This is only an interpretive postal counter, not real trading.')+'</p><p>'+esc(t?.body||'Welcome to the Narromine postal counter. Choose the service you want to learn about. The interior is an evidence-informed interpretation rather than a surveyed floor plan; no real payments, mailing, tracking or ID checks occur.')+'</p>',
       actions:t?[{label:'← Back to services',run:()=>narrominePostalCounterPanel()}]:
         Object.entries(POSTAL_TOPICS).map(([id,service])=>({label:service.title,run:()=>narrominePostalCounterPanel(id)}))};
   }
@@ -748,6 +835,7 @@ async function start() {
     const campus=inside.campus||null;
     const countryHome=inside.countryHome||null;
     const narrominePostOffice=!!inside.narrominePostal;
+    const narromineColes=!!inside.narromineColes;
     const narromineChurch=!!inside.narromineChurch;
     inside.bakeryImmersion?.dispose();
     inside.workplay?.dispose();
@@ -763,6 +851,9 @@ async function start() {
     if (placeOutside) {
       if (narromineChurch) {
         const pose=ST_MARYS_ENTRANCE.returnPose;
+        player.place(pose.x,pose.z,pose.yaw);
+      } else if (narromineColes) {
+        const pose=NARROMINE_COLES_ENTRANCE.returnPose;
         player.place(pose.x,pose.z,pose.yaw);
       } else if (narrominePostOffice) {
         // Return to the north-side footpath rather than inside solid exterior masonry.
@@ -787,7 +878,7 @@ async function start() {
     // Close the door behind the player so the doorway does not re-trigger.
     const d = town.doors.find((d) => d.userData.coordinate === coord); if (d) d.userData.open = 0;
     ambience.door();
-    status(narromineChurch?"Back outside St Mary's Anglican Church · 148 Dandaloo Street.":narrominePostOffice?'Back outside Narromine Post Office · 74 Dandaloo Street.':campus?`Back outside ${campus.name}.`:countryHome?`Back outside ${countryHome.address} · ${countryHome.country}.`:shop?`Back outside ${shop.name}.`:`Back on the street at ${coord}.`);
+    status(narromineChurch?"Back outside St Mary's Anglican Church · 148 Dandaloo Street.":narromineColes?'Back outside Coles Narromine · 76 Dandaloo Street.':narrominePostOffice?'Back outside Narromine Post Office · 74 Dandaloo Street.':campus?`Back outside ${campus.name}.`:countryHome?`Back outside ${countryHome.address} · ${countryHome.country}.`:shop?`Back outside ${shop.name}.`:`Back on the street at ${coord}.`);
   }
 
   // ── Overview (bird's-eye) ────────────────────────────────────────────────
@@ -825,6 +916,18 @@ async function start() {
   for (const h of PLAN_HOMES) { const o = document.createElement('option'); o.value = homeLabel(h); list.append(o); }
   { const o = document.createElement('option'); o.value = 'Narromine · Dandaloo Street'; list.append(o); }
   { const o = document.createElement('option'); o.value = 'Narromine Post Office · 74 Dandaloo Street'; list.append(o); }
+  { const o = document.createElement('option'); o.value = 'Coles Narromine · 76 Dandaloo Street'; list.append(o); }
+  { const o = document.createElement('option'); o.value = 'Leah Bennett’s home · Terangion Street (West)'; list.append(o); }
+  // A selected browser datalist suggestion should travel immediately. Unlike
+  // ordinary typed input, Chromium marks a pick as insertReplacementText.
+  // Keep form submit as the one authoritative travel path (Go/Enter/pick).
+  // Check the live list: places can be added after this binding runs.
+  $('search').addEventListener('input', (e) => {
+    const v = $('search').value;
+    if (e.inputType === 'insertReplacementText' && [...list.options].some(o => o.value === v)) {
+      $('search-form').requestSubmit();
+    }
+  });
   $('search-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = $('search').value.trim().toLowerCase(); if (!q) return;
@@ -843,6 +946,20 @@ async function start() {
       const pose=NARROMINE_POST_OFFICE_ENTRANCE.outside;
       player.place(pose.x,pose.z,pose.yaw);
       status('Outside the north-side entrance to Narromine Post Office, 74 Dandaloo Street. Walk to the steps or tap ✋ to enter.');
+      $('search').blur();return;
+    }
+    if (/^(?:coles(?: narromine)?|76 dandaloo(?: street)?)(?:\b|$)/.test(q) || q.startsWith('coles narromine ·')) {
+      if(driving.driving){status('Park and get out before fast travel.');return;}
+      if(mode==='house')leave(false);closePanel();npcChat.close();setOverview(false);
+      const pose=NARROMINE_COLES_ENTRANCE.outside;player.place(pose.x,pose.z,pose.yaw);
+      status('Outside Coles Narromine, 76 Dandaloo Street. Walk in during regular trading hours.');
+      $('search').blur();return;
+    }
+    if (/^(?:leah bennett(?:’s|'s)? home|leah's house|leah’s house|terangion street west)/.test(q)) {
+      if(driving.driving){status('Park and get out before fast travel.');return;}
+      if(mode==='house')leave(false);closePanel();npcChat.close();setOverview(false);
+      player.place(postalHomeX,postalHomeZ,Math.PI);
+      status('Outside Leah Bennett’s fictional home: mapped OSM house #203 near Terangion Street (West). No real household identified.');
       $('search').blur();return;
     }
     if (/^(?:st\.? mary'?s(?: anglican)?(?: church)?(?: narromine)?|148 dandaloo(?: street)?)$/.test(q)) {
@@ -1312,7 +1429,11 @@ async function start() {
   function use() {
     if (carried) { putDown(); return; }
     if(driving.driving){status(driving.exit());return;}
+    if(yard.driving){status(yard.exit(player));return;}
+    if(trains.driving){status(trains.exit(player));return;}
+    if(mode==='town'&&!driving.driving&&yard.near(player.pos)){status(yard.board());return;}
     if(mode==='town'&&nearCar){status(driving.enter(nearCar));return;}
+    if(mode==='town'&&!driving.driving&&trains.near(player.pos)){status(trains.board());return;}
     if(player.seated){
       if(player.stand(world))status('You stand up.');
       else status('There is no clear space to stand. Move the furniture or try again.');
@@ -1331,7 +1452,8 @@ async function start() {
       if (nearPerson?.spot?.atm) { openPanel(atmPanel(), guideSpot); return; }
       if (nearPerson?.spot?.rack) { status(takeRackTools(life.civic.player).message); return; }
       if (nearPerson?.spot?.itemId) { takeGroundItem(nearPerson.spot); return; }
-      if (nearPerson?.spot?.narromineEnter) { enterNarrominePostOffice(); return; }
+      if (nearPerson?.spot?.narromineEnter || nearPerson?.spot?.narromine?.narromineEnter) { enterNarrominePostOffice(); return; }
+      if (nearPerson?.spot?.narromine?.colesEnter) { enterNarromineColes(); return; }
       if (nearPerson?.spot?.narromine) { const n = nearPerson.spot.narromine; openPanel({ title: n.label, body: `<p>${esc(n.text)}</p><p class="dim">Narromine, NSW · Wiradjuri Country. Sources: docs/NARROMINE_RESEARCH_AND_PLAN_2026-11-03.md</p>` }, guideSpot); return; }
       if (nearPerson?.spot?.market) { openPanel(stallPanel(life, nearPerson.spot.market, (id, i) => buyAtStall(life, id, i)), guideSpot); return; }
       if (nearPerson?.spot?.id === 'square') {   // an open square, not a building: the market notice and the latest town news
@@ -1363,6 +1485,7 @@ async function start() {
       const thing = nearThing, request = ++interactionRequest, house = inside;
       const restricted=restrictedServiceAction(life,inside?.place,thing);
       if(restricted){status(restricted);return;}
+      if(thing.act?.do==='narromine-postal-person'){openPanel(narrominePostalPersonPanel(),thing);return;}
       if(thing.act?.do==='narromine-postal-counter'){openPanel(narrominePostalCounterPanel(),thing);return;}
       if(thing.act?.do==='pub-expansion'){openPanel(pubExpansionPanel(life),thing);return;}
       if(thing.act?.do==='pub-venue'){openPanel(pubExpansionPanel(life),thing);return;}
@@ -1519,7 +1642,9 @@ async function start() {
   const saved = loadSave();
   if (saved?.pos) {
     for (const c of saved.visited || []) visited.add(c);
-    if (saved.inside===NARROMINE_POST_OFFICE_SAVE_ID) {
+    if (saved.inside===NARROMINE_COLES_SAVE_ID) {
+      enterNarromineColes(true);player.place(saved.pos.x,saved.pos.z,saved.yaw);
+    } else if (saved.inside===NARROMINE_POST_OFFICE_SAVE_ID) {
       enterNarrominePostOffice();player.place(saved.pos.x,saved.pos.z,saved.yaw);
     } else if (saved.inside===ST_MARYS_SAVE_ID) {
       enterStMarys();player.place(saved.pos.x,saved.pos.z,saved.yaw);
@@ -1654,16 +1779,41 @@ async function start() {
       player.speedFactor=movementSpeedFactor(movementSpeed,n.hunger,n.fatigue);
       // While driving: V (or 🎥 on phones) switches chase, rider's-eye and high views.
       if(driving.driving&&input.consume('view'))status(driving.cycleView()); else input.consume('view');
+      if(driving.driving&&input.consume('lane')){status(driving.toggleLaneAssist());showLane();} else input.consume('lane');
+      laneBtn.hidden=!driving.driving;
       // Jump, run and crouch do nothing in a vehicle: show ✋ and 🎥 only, clear of the minimap.
       $('t-view').hidden=!driving.driving; for(const id of ['t-jump','t-run','t-crouch'])$(id).hidden=driving.driving;
       if(mode==='town'&&driving.driving){ driving.update(dt); if(driving.message){ status(driving.message); driving.clearMessage(); } }
+      else if(mode==='town'&&yard.driving){
+        const q = input.keys.has('q'), r = input.keys.has('r');
+        if(q&&!yardKeyQ)status(yard.action('couple'));
+        if(r&&!yardKeyR)status(yard.action('load'));
+        yardKeyQ=q;yardKeyR=r;
+        yard.update(dt,input);
+        if(yard.message){status(yard.message);yard.clearMessage();}
+        const c=yard.cab();
+        player.pos.set(c.x,0,c.z);player.yaw=-c.heading-Math.PI/2;player.pitch=0;
+        camera.position.set(c.x-15,8.5,c.z-14);camera.lookAt(c.x+20,1.5,c.z);
+      }
+      else if(mode==='town'&&trains.driving){
+        trains.update(dt,input); if(trains.message){ status(trains.message); trains.clearMessage(); }
+        // Chase camera behind and above the cab, looking down the line.
+        const c=trains.cab(),hx=Math.cos(c.heading),hz=Math.sin(c.heading);
+        player.pos.set(c.x,0,c.z); player.yaw=-c.heading-Math.PI/2; player.pitch=0;
+        camera.position.set(c.x-hx*16,8.5,c.z-hz*16); camera.lookAt(c.x+hx*30,1.5,c.z+hz*30);
+      }
       else {
         if (mode === 'town' && !overview) for (const tap of input.takeTaps()) tapWalk(tap.x, tap.y); else input.takeTaps();
         stepAutoWalk(dt);
         player.update(dt,input,world);
       }
     }
+    if(!yard.driving){yardKeyQ=false;yardKeyR=false;}
+    yardControls.style.display = yard.driving ? 'flex' : 'none';
     drivingDashboard.update(mode==='town'&&!overview?driving.activeVehicle():null);
+    ambience.setRadioPlaying(drivingDashboard.getState().station>0);
+    trains.tick(dt,{day:life.day,minute:life.minute});   // timetabled freights and level-crossing booms
+    if(mode==='town'&&player.pos.x<-2640) narromineTraffic.update(dt,player.pos,life.minute);
     market.update(life.day, life.minute);
     frameItems();
     carryFrame();
@@ -1685,6 +1835,9 @@ async function start() {
       :[];
     const view = mode === 'house' && inside?.view ? inside.view.place(camera, outdoorCam) : null;
     townLife.update(dt, t, { player, mode, overview, camera, talkingTo, view });
+    narrominePostalOutdoor.update(life.day,life.minute,mode==='town'?player.pos:null);
+    inside?.updatePostalStaff?.(life.day,life.minute);
+    inside?.updatePostalShopper?.(life.day,life.minute);
     const solar = townLife.solarState();
     if(solar) sunShadows.update({ direction:solar.direction, elevation:solar.elevation,
       eye:player.pos, dt, frameSeconds:raw, weather:life.civic.weather,
@@ -1767,6 +1920,8 @@ async function start() {
       }
       // Villagers, the guide kiosk and the shop counters: pick the one the player is facing.
       narromine.update(player.pos);
+      // Narromine sits on open inland plains with clear air: see much further there than in the town.
+      { const inNarromine = player.pos.x < -2640; fog.near = inNarromine ? 220 : 60; fog.far = inNarromine ? 650 : 170; }
       nearPerson = null; let bestP = Infinity;
       const consider = (c, reach, bonus = 0) => {
         const d = Math.hypot(c.pos.x - player.pos.x, c.pos.z - player.pos.z);
@@ -1836,7 +1991,8 @@ async function start() {
         }
       }
       if(mode==='town' && !overview && !driving.driving && nearNarrominePostOfficeDoor(player.pos)) enterNarrominePostOffice();
-      if(mode==='town' && !overview && !driving.driving && nearStMarysDoor(player.pos)) enterStMarys();
+      if(mode==='town' && !overview && !driving.driving && nearNarromineColesDoor(player.pos)) enterNarromineColes();
+       if(mode==='town' && !overview && !driving.driving && nearStMarysDoor(player.pos)) enterStMarys();
       if(mode==='town' && !overview && !driving.driving){
         for(const place of life.places.values()){
           if(place.kind!=='park'&&atCivicEntrance(place,player.pos)){
@@ -1875,8 +2031,12 @@ async function start() {
         }
       }
       const nearRelic = expedition.nearby(player.pos), relicD = away(nearRelic), npcD = away(nearNPC), personD = away(nearPerson);
-      $('prompt').hidden = (!driving.driving && !nearCar && !player.seated && !nearTownSeat && !nearNPC && !nearPerson && !nearHouse && !nearRelic) || !!panelOpen || expedition.isOpen() || npcChat.isOpen() || !$('npc-roster').hidden;
+      $('prompt').hidden = (!driving.driving && !trains.driving && !yard.driving && !(mode==='town'&&(trains.near(player.pos)||yard.near(player.pos))) && !nearCar && !player.seated && !nearTownSeat && !nearNPC && !nearPerson && !nearHouse && !nearRelic) || !!panelOpen || expedition.isOpen() || npcChat.isOpen() || !$('npc-roster').hidden;
       if(driving.driving)$('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — Park and get out (stop first)`;
+      else if(yard.driving){const y=yard.state();$('prompt').textContent=`🚂 Yard shunter ${y.speedKmh} / ${y.limitKmh} km/h · ${y.coupled} wagon(s) · ${input.touch?'Use loading buttons':'Q couple/uncouple · R load/stage · Space brake'} · E exit when stopped`;}
+      else if(trains.driving){const t=trains.state();$('prompt').textContent=`🚆 ${t.speedKmh} km/h · limit ${t.limitKmh} · ${t.line} · next junction: ${t.route==='straight'?'straight':t.route} (${input.touch?'joystick ←/→':'A/D'}) · ${input.touch?'✋':'E'} step down when stopped`;}
+      else if(mode==='town'&&yard.near(player.pos))$('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — 🚂 Operate the Repository Town shunter`;
+      else if(mode==='town'&&trains.near(player.pos))$('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — 🚆 Drive the grain train`;
       else if(nearCar)$('prompt').textContent=`${input.touch?'Tap ✋':'Press E'} — Drive ${nearCar.registration} · ${nearCar.model}`;
       else if (player.seated) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Stand up · Move or jump to stand`;
       else if(nearTownSeat) $('prompt').textContent = `${input.touch ? 'Tap ✋' : 'Press E'} — Sit on ${nearTownSeat.label}`;
@@ -2135,11 +2295,17 @@ async function start() {
     }),
     vehicles:()=>life.motorReport().owned.map(v=>({...v})),
     enterVehicle:(reg)=>driving.enter(life.motorReport().owned.find(v=>v.registration===reg)),
+    yardTrain:()=>yard.state(), yardBoard:()=>yard.board(), yardExit:()=>yard.exit(player), yardAction:(kind)=>yard.action(kind), yardColliders:()=>yard.colliders(),
+    train:()=>trains.state(), traffic:()=>({count:narromineTraffic.count,models:narromineTraffic.modelsLoaded,cars:narromineTraffic.cars.map(c=>({x:c.x,z:c.z,v:c.v,yaw:c.yaw,model:c.model}))}), probeWithMoving:(x,z,r=.4)=>!!townWorld.hits(x,z,r), trainNear:()=>trains.near(player.pos), trainBoard:()=>trains.board(), trainExit:()=>trains.exit(player), trainRoute:(p)=>trains.setRoute(p), runFreight:(i)=>trains.runFreight(i), trainColliders:()=>trains.colliders(),
     leaveVehicle:()=>driving.exit(),
     // A fixed step behaves like a real frame, including showing the driving message (off-road, braking).
     narromineVisible:()=>narromine.group.visible,
     stMarysEntrance:()=>({...ST_MARYS_ENTRANCE,outside:{...ST_MARYS_ENTRANCE.outside},returnPose:{...ST_MARYS_ENTRANCE.returnPose}}),
     narrominePostOfficeEntrance:()=>({...NARROMINE_POST_OFFICE_ENTRANCE, outside:{...NARROMINE_POST_OFFICE_ENTRANCE.outside},returnPose:{...NARROMINE_POST_OFFICE_ENTRANCE.returnPose}}),
+    narromineColesEntrance:()=>({...NARROMINE_COLES_ENTRANCE,outside:{...NARROMINE_COLES_ENTRANCE.outside},returnPose:{...NARROMINE_COLES_ENTRANCE.returnPose}}),
+    narrominePostalResident:()=>({...postalState(life.day,life.minute),homeOsmIndex:NARROMINE_POSTAL_PERSON.home.osmIndex,outdoorVisible:narrominePostalOutdoor.group.visible}),
+    narromineColesPlan:()=>({...COLES_INTERPRETIVE_PLAN,open:colesOpen(life.day,life.minute)}),
+    enterNarromineColes,
     enterNarrominePostOffice,
     narrominePlace:(name)=>{const p=NARROMINE_PLACES.find(x=>x.name===name);return p?{x:p.x,z:p.z,kind:p.kind,address:p.address}:null;},
     onRoad:(x,z)=>roadAllows(x,z),
