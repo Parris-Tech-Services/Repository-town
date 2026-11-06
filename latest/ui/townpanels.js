@@ -76,6 +76,15 @@ function bagLine(life) { const me = life.civic.player; const n=life.needsReport(
 function civicPanel(life, id, again) {
   const p = life.place(id), c = life.civic, u = life.ledger().utilities, rows = [`<p>${esc(ABOUT[id] || '')}</p>`];
   const staff = life.villagers.filter((v) => v.work === id);
+  if(['sheep','dairy','coop','vet','stockfeed','hardware','trades'].includes(id)&&life.industryReport){
+    const r=life.industryReport(),h=r.herds[id];
+    if(h)rows.push('<p><b>Animals:</b> '+h.healthy+' of '+h.animals+' healthy'+(h.isolated?' · '+h.isolated+' isolated for the vet':'')+' · stock feed on hand: '+h.feed+' bags</p>');
+    if(id==='vet')rows.push('<p><b>Veterinary kits:</b> '+(r.stock.vet.medkit||0)+'</p><p><b>Farm cases:</b> '+(r.cases.map(c=>esc(c.id+' '+c.animalId+' — '+c.status)).join(' | ')||'none')+'</p>');
+    if(id==='stockfeed')rows.push('<p><b>Stock feed:</b> '+(r.stock.stockfeed.feed||0)+' bags for the Sheep Station, Dairy and Chook Shed</p>');
+    if(id==='hardware')rows.push('<p><b>Building supplies:</b> '+esc(Object.entries(r.stock.hardware).map(([g,n])=>n+' '+g).join(', '))+'</p>');
+    if(id==='trades'||id==='hardware')rows.push('<p><b>'+esc(r.project.name)+':</b> '+(r.project.finishedDay?'complete':'working on the '+esc(r.project.stageName))+'</p>');
+    if(r.log.length)rows.push('<p class="dim">'+esc(r.log.slice(0,3).map(e=>'Day '+e.day+': '+e.text).join(' | '))+'</p>');
+  }
   if(id==='soyfarm'||id==='soyplant'){
     const soy=life.soyReport(),f=soy.field;
     rows.push('<p><b>SOY SUPPLY CHAIN · traceable batches</b></p><p>'+
@@ -315,7 +324,7 @@ function placePanelBase(life, id) {
 // A real survival loop: food comes out of the visitor's purchased inventory.
 export function needsPanel(life) {
   const n=life.needsReport(),me=life.civic.player;
-  const edibles=Object.entries(me.bag).filter(([g,q])=>q>0&&(['bread','pie','fruit','veg','eggs','milk','lamb'].includes(g) || Object.values(VENUE_MENU).some(menu=>Object.hasOwn(menu,g))));
+  const edibles=Object.entries(me.bag).filter(([g,q])=>q>0&&(['bread','pie','fruit','veg','eggs','milk','lamb','cooked_lamb','cooked_veg'].includes(g) || Object.values(VENUE_MENU).some(menu=>Object.hasOwn(menu,g))));
   const act=(label,g)=>({label,run:()=>{const msg=life.eatItem(g),p=needsPanel(life);return {...p,body:'<p><b>'+esc(msg)+'</b></p>'+p.body};}});
   return {title:'Your food and sleep',wide:false,
     body:'<p>🍽 <b>Hunger:</b> '+Math.round(n.hunger)+'% (100% means very hungry).</p>'+
